@@ -193,7 +193,6 @@ if page == "Dashboard":
 
     st.dataframe(
         df[available_cols].style
-        .background_gradient(subset=["resilience_score"], cmap="RdYlGn", vmin=15, vmax=70)
         .format({
             "arrivals": "{:,.0f}",
             "nights": "{:,.0f}",
@@ -505,7 +504,7 @@ elif page == "Trends & Time Series":
                 "avg_stay": "{:.2f}",
                 "yoy_arrivals_%": "{:+.1f}%",
             }, na_rep="N/A")
-            .background_gradient(subset=["yoy_arrivals_%"], cmap="RdYlGn", vmin=-20, vmax=20),
+            ,
             use_container_width=True,
         )
 
@@ -598,7 +597,7 @@ else:
                 "E_j (Entropy)": "{:.4f}",
                 "d_j (Diversity)": "{:.4f}",
                 "Weight w_j": "{:.2%}",
-            }).background_gradient(subset=["Weight w_j"], cmap="YlOrRd", vmin=0, vmax=0.4),
+            }),
             use_container_width=True, hide_index=True,
         )
 

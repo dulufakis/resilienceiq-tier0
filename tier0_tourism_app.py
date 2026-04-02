@@ -1,6 +1,7 @@
 """
-ResilienceIQ Tier 0 — Realtime Tourism Resilience Dashboard
-Live data from: Eurostat (arrivals/nights), Google Trends (demand), Open-Meteo (weather).
+ResilienceIQ Tier 0 — Realtime Tourism Resilience Dashboard (v2: 3x3 Pillars)
+Live data: Eurostat (supply), Google Trends + Wikipedia + Seasonality (demand),
+           Open-Meteo Weather + Air Quality + Marine (environment).
 """
 
 import streamlit as st
@@ -12,7 +13,9 @@ from datetime import datetime
 
 from data_fetcher import (
     MUNICIPALITIES, WEIGHTS_FALLBACK, COMPONENT_NAMES, PILLARS, PILLAR_NAMES,
-    fetch_eurostat_tourism, fetch_google_trends, fetch_weather,
+    fetch_eurostat_tourism, fetch_eurostat_seasonality,
+    fetch_google_trends, fetch_wikipedia_pageviews,
+    fetch_weather, fetch_air_quality, fetch_marine,
     build_resilience_snapshot,
 )
 
@@ -59,7 +62,7 @@ st.markdown("""
 # ─── Sidebar ─────────────────────────────────────
 with st.sidebar:
     st.markdown("### ResilienceIQ")
-    st.caption("Tier 0 — Live Tourism Resilience")
+    st.caption("Tier 0 — Live Tourism Resilience (3x3 Pillars)")
     st.divider()
 
     page = st.radio("Navigation", [
@@ -83,33 +86,51 @@ with st.sidebar:
 
 
 # ─── Fetch Real Data (cached) ───────────────────
-@st.cache_data(ttl=1800, show_spinner="Fetching Eurostat data...")
+@st.cache_data(ttl=1800, show_spinner="Fetching Eurostat annual data...")
 def _fetch_eurostat():
     return fetch_eurostat_tourism()
+
+@st.cache_data(ttl=1800, show_spinner="Fetching Eurostat seasonality...")
+def _fetch_seasonality():
+    return fetch_eurostat_seasonality()
 
 @st.cache_data(ttl=3600, show_spinner="Fetching Google Trends...")
 def _fetch_trends():
     return fetch_google_trends()
 
+@st.cache_data(ttl=3600, show_spinner="Fetching Wikipedia pageviews...")
+def _fetch_wiki():
+    return fetch_wikipedia_pageviews()
+
 @st.cache_data(ttl=900, show_spinner="Fetching live weather...")
 def _fetch_weather():
     return fetch_weather()
 
-df_euro = _fetch_eurostat()
-df_trends = _fetch_trends()
-df_weather = _fetch_weather()
+@st.cache_data(ttl=900, show_spinner="Fetching air quality...")
+def _fetch_air_quality():
+    return fetch_air_quality()
 
-# Global computed values
+@st.cache_data(ttl=900, show_spinner="Fetching marine data...")
+def _fetch_marine():
+    return fetch_marine()
+
+df_euro = _fetch_eurostat()
+df_season = _fetch_seasonality()
+df_trends = _fetch_trends()
+df_wiki = _fetch_wiki()
+df_weather = _fetch_weather()
+df_air = _fetch_air_quality()
+df_marine = _fetch_marine()
+
 euro_year = df_euro["year"].max() if not df_euro.empty else "N/A"
 
 # Build snapshot (not cached — reacts to shock sliders)
 df = build_resilience_snapshot(
-    df_euro, df_trends, df_weather,
-    shock_demand=shock_demand,
-    shock_arrivals=shock_arrivals,
+    df_euro, df_trends, df_weather, df_air, df_marine, df_wiki, df_season,
+    shock_demand=shock_demand, shock_arrivals=shock_arrivals,
 )
 
-# Extract diagnostics from attrs, then clear to avoid pandas serialization issues
+# Extract diagnostics, then clear attrs for serialization
 weights = df.attrs.get("weights", WEIGHTS_FALLBACK)
 pillar_result = df.attrs.get("pillar_result")
 weighting_method = df.attrs.get("weighting_method", "Static")
@@ -123,16 +144,14 @@ if page == "Dashboard":
     st.markdown("""
     <div class='main-header'>
         <h1>Resilience Control Center</h1>
-        <p>Live tourism resilience monitoring | Eurostat + Google Trends + Open-Meteo</p>
+        <p>Live tourism resilience | 9 indicators x 3 pillars | Eurostat + Google Trends + Wikipedia + Open-Meteo</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Top KPIs ──
     avg_score = df["resilience_score"].mean()
     top = df.iloc[0]
     bottom = df.iloc[-1]
     high_n = (df["zone"] == "ΥΨΗΛΗ").sum()
-    low_n = (df["zone"] == "ΧΑΜΗΛΗ").sum()
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Mean Score", f"{avg_score:.1f}")
@@ -155,14 +174,11 @@ if page == "Dashboard":
             color_discrete_map={"ΥΨΗΛΗ": "#27AE60", "ΜΕΣΑΙΑ": "#E67E22", "ΧΑΜΗΛΗ": "#C0392B"},
             hover_name="dimos",
             hover_data={
-                "resilience_score": ":.1f",
-                "region": True,
-                "arrivals": ":,.0f",
-                "lat": False, "lon": False, "zone": False,
+                "resilience_score": ":.1f", "region": True,
+                "arrivals": ":,.0f", "lat": False, "lon": False, "zone": False,
             },
             zoom=5.5, center={"lat": 38.0, "lon": 24.0},
-            mapbox_style="carto-positron",
-            height=480,
+            mapbox_style="carto-positron", height=480,
         )
         fig_map.update_layout(margin=dict(l=0, r=0, t=0, b=0), legend=dict(orientation="h", y=-0.05))
         st.plotly_chart(fig_map, use_container_width=True)
@@ -170,8 +186,7 @@ if page == "Dashboard":
     with col_bar:
         st.subheader("Resilience Ranking")
         fig_bar = go.Figure(go.Bar(
-            x=df["resilience_score"], y=df["dimos"],
-            orientation="h",
+            x=df["resilience_score"], y=df["dimos"], orientation="h",
             marker_color=df["color"],
             text=df["resilience_score"].apply(lambda v: f"{v:.1f}"),
             textposition="outside",
@@ -185,83 +200,97 @@ if page == "Dashboard":
 
     st.divider()
 
+    # ── Pillar Scores Comparison ──
+    st.subheader("Pillar Score Comparison")
+    pillar_cols = [f"pillar_{p}" for p in PILLARS]
+    if all(c in df.columns for c in pillar_cols):
+        fig_pillars = go.Figure()
+        colors_p = {"supply": "#2196F3", "demand": "#FF9800", "environment": "#4CAF50"}
+        for pname in PILLARS:
+            fig_pillars.add_trace(go.Bar(
+                name=PILLAR_NAMES[pname],
+                x=df["dimos"], y=df[f"pillar_{pname}"],
+                marker_color=colors_p[pname],
+            ))
+        fig_pillars.update_layout(
+            barmode="group", height=380,
+            margin=dict(t=10, b=10),
+            yaxis_title="Pillar Score (0-100)",
+            legend=dict(orientation="h", y=-0.15),
+        )
+        st.plotly_chart(fig_pillars, use_container_width=True)
+
     # ── Data Table ──
     st.subheader("Full Data Table (Live)")
-    display_cols = ["dimos", "region", "arrivals", "nights", "avg_stay",
-                    "yoy_arrivals_%", "demand_index", "weather_score",
-                    "resilience_score", "zone"]
+    display_cols = [
+        "dimos", "region", "arrivals", "nights", "avg_stay",
+        "demand_index", "wiki_views", "seasonality_score",
+        "weather_score", "air_quality_score", "coastal_score",
+        "resilience_score", "zone",
+    ]
     available_cols = [c for c in display_cols if c in df.columns]
 
     st.dataframe(
-        df[available_cols].style
-        .format({
-            "arrivals": "{:,.0f}",
-            "nights": "{:,.0f}",
-            "avg_stay": "{:.2f}",
-            "yoy_arrivals_%": "{:+.1f}%",
-            "demand_index": "{:.1f}",
-            "weather_score": "{:.1f}",
+        df[available_cols].style.format({
+            "arrivals": "{:,.0f}", "nights": "{:,.0f}", "avg_stay": "{:.2f}",
+            "demand_index": "{:.1f}", "wiki_views": "{:,.0f}",
+            "seasonality_score": "{:.1f}", "weather_score": "{:.1f}",
+            "air_quality_score": "{:.1f}", "coastal_score": "{:.1f}",
             "resilience_score": "{:.1f}",
         }, na_rep="N/A"),
-        use_container_width=True,
-        height=380,
+        use_container_width=True, height=420,
     )
 
     st.markdown("""
     <div class='data-source'>
-    Sources: Eurostat tour_occ_arn2 & tour_occ_nin2 (NUTS-2) | Google Trends (GR) | Open-Meteo forecast API
+    Sources: Eurostat tour_occ_arn2/nin2/nim (NUTS-2) | Google Trends (GR) |
+    Wikipedia Pageviews API (en+de+fr) | Open-Meteo Forecast + Air Quality + Marine APIs
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Measured Variables & Two-Stage Pillar Weights ──
-    with st.expander("Measured Variables & Two-Stage Pillar Weights"):
+    # ── Weights Expander ──
+    with st.expander("Two-Stage Pillar Entropy Weights (3x3)"):
         sources = {
-            "arrivals": f"Eurostat `tour_occ_arn2` (NUTS-2, {euro_year})",
-            "nights": f"Eurostat `tour_occ_nin2` (NUTS-2, {euro_year})",
-            "demand": "Google Trends API (pytrends, weekly)",
-            "weather": "Open-Meteo Forecast API (hourly)",
-            "avg_stay": f"Derived: nights / arrivals ({euro_year})",
+            "arrivals": f"Eurostat tour_occ_arn2 ({euro_year})",
+            "nights": f"Eurostat tour_occ_nin2 ({euro_year})",
+            "avg_stay": f"Derived: nights/arrivals ({euro_year})",
+            "demand": "Google Trends (pytrends)",
+            "wiki_views": "Wikipedia Pageviews API (en+de+fr)",
+            "seasonality": "Eurostat monthly / fallback",
+            "weather": "Open-Meteo Forecast API",
+            "air_quality": "Open-Meteo Air Quality API",
+            "coastal": "Open-Meteo Marine API",
         }
 
         if pillar_result:
-            st.markdown(f"**Weighting Method:** Two-Stage Pillar Entropy")
-            st.markdown("""
-**Stage 1:** Within each pillar, Shannon Entropy assigns weights based on cross-municipality variation.
-**Stage 2:** Each pillar receives **equal weight (1/3)**, preventing correlated supply indicators from dominating.
-            """)
+            pw = pillar_result.get("pillar_weights", {})
+            st.markdown("**Stage 1:** Within-pillar Shannon Entropy (3 indicators per pillar)")
+            st.markdown("**Stage 2:** Cross-pillar Shannon Entropy on 3 pillar composite scores")
 
             # Pillar summary
             pillar_rows = []
-            for pname, pdef in PILLARS.items():
+            for pname in PILLARS:
                 pillar_rows.append({
                     "Pillar": PILLAR_NAMES[pname],
-                    "Indicators": ", ".join(COMPONENT_NAMES.get(v, v) for v in pdef["indicators"]),
-                    "Pillar Weight": f"{pdef['pillar_weight']:.2%}",
+                    "Indicators": ", ".join(COMPONENT_NAMES.get(v, v) for v in PILLARS[pname]["indicators"]),
+                    "Pillar Weight (Entropy)": f"{pw.get(pname, 0):.2%}",
                 })
             st.dataframe(pd.DataFrame(pillar_rows), use_container_width=True, hide_index=True)
 
-            # Detailed indicator weights
+            # Indicator weights
             var_rows = []
             for pname, pdet in pillar_result["pillar_details"].items():
                 for var, ww in pdet["within_weights"].items():
                     var_rows.append({
                         "Variable": COMPONENT_NAMES.get(var, var),
                         "Pillar": PILLAR_NAMES[pname],
-                        "Within-Pillar w": f"{ww:.2%}",
-                        "Final Weight": f"{weights[var]:.2%}",
+                        "Within w": f"{ww:.2%}",
+                        "Final Weight": f"{weights.get(var, 0):.2%}",
                         "Source": sources.get(var, ""),
                     })
             st.dataframe(pd.DataFrame(var_rows), use_container_width=True, hide_index=True)
-
-            max_var = max(weights, key=weights.get)
-            min_var = min(weights, key=weights.get)
-            st.info(
-                f"**Highest weight:** {COMPONENT_NAMES[max_var]} ({weights[max_var]:.1%})\n\n"
-                f"**Lowest weight:** {COMPONENT_NAMES[min_var]} ({weights[min_var]:.1%})"
-            )
         else:
             st.markdown("**Weighting Method:** Static (fallback)")
-            st.markdown("Pillar entropy computation was not available. Using fallback weights.")
 
     # Export
     csv = df.to_csv(index=False).encode("utf-8")
@@ -277,7 +306,7 @@ elif page == "Municipality Deep-Dive":
     st.markdown("""
     <div class='main-header'>
         <h1>Municipality Deep-Dive</h1>
-        <p>Component analysis with real data breakdown</p>
+        <p>9-indicator decomposition with pillar analysis</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -294,31 +323,27 @@ elif page == "Municipality Deep-Dive":
     </div>""", unsafe_allow_html=True)
 
     arrivals_str = f"{f['arrivals']:,.0f}" if pd.notna(f.get('arrivals')) else "N/A"
-    fc2.metric("Arrivals (Eurostat)", arrivals_str)
-
-    nights_str = f"{f['nights']:,.0f}" if pd.notna(f.get('nights')) else "N/A"
-    fc3.metric("Nights (Eurostat)", nights_str)
-
-    fc4.metric("Avg Stay (days)", f"{f['avg_stay']:.2f}" if pd.notna(f.get('avg_stay')) else "N/A")
-    fc5.metric("Demand Index", f"{f['demand_index']:.1f}", delta=f"{shock_demand}%" if shock_demand else None)
+    fc2.metric("Arrivals", arrivals_str)
+    fc3.metric("Wiki Views", f"{f.get('wiki_views', 0):,.0f}")
+    fc4.metric("Seasonality", f"{f.get('seasonality_score', 50):.0f}/100")
 
     temp_str = f"{f['temperature']:.1f}C" if pd.notna(f.get('temperature')) else "N/A"
-    weather_str = f.get("weather_desc", "N/A")
-    fc6.metric("Weather Now", temp_str, delta=weather_str)
+    fc5.metric("Temperature", temp_str)
+    fc6.metric("Air Quality", f"{f.get('air_quality_score', 50):.0f}/100")
 
     st.divider()
     col_wf, col_radar = st.columns(2)
 
-    # ── Waterfall (SHAP-style decomposition) ──
+    # ── Waterfall (9 components) ──
     with col_wf:
-        components = ["Arrivals", "Nights", "Demand", "Weather", "Avg Stay"]
-        values = [f["w_arrivals"], f["w_nights"], f["w_demand"], f["w_weather"], f["w_avg_stay"]]
+        comp_keys = list(COMPONENT_NAMES.keys())
+        comp_labels = [COMPONENT_NAMES[k] for k in comp_keys]
+        values = [f.get(f"w_{k}", 0) for k in comp_keys]
 
         fig_wf = go.Figure(go.Waterfall(
-            name="Score Breakdown",
-            orientation="v",
-            measure=["relative"] * 5 + ["total"],
-            x=components + ["TOTAL"],
+            name="Score Breakdown", orientation="v",
+            measure=["relative"] * 9 + ["total"],
+            x=[c[:12] for c in comp_labels] + ["TOTAL"],
             y=values + [0],
             text=[f"{v:.1f}" for v in values] + [f"{f['resilience_score']:.1f}"],
             textposition="outside",
@@ -329,47 +354,70 @@ elif page == "Municipality Deep-Dive":
         ))
         fig_wf.update_layout(
             title=f"Score Decomposition: {focus}",
-            height=420, margin=dict(t=40, b=10),
-            showlegend=False,
+            height=450, margin=dict(t=40, b=10),
+            showlegend=False, xaxis_tickangle=-45,
         )
         st.plotly_chart(fig_wf, use_container_width=True)
 
-    # ── Radar vs national average ──
+    # ── Radar: Pillar-level comparison ──
     with col_radar:
-        cats = ["Arrivals", "Nights", "Demand", "Weather", "Avg Stay"]
-        municipality_vals = [f["norm_arrivals"], f["norm_nights"], f["norm_demand"],
-                             f["norm_weather"], f["norm_avg_stay"]]
-        avg_vals = [df["norm_arrivals"].mean(), df["norm_nights"].mean(), df["norm_demand"].mean(),
-                    df["norm_weather"].mean(), df["norm_avg_stay"].mean()]
+        pillar_labels = [PILLAR_NAMES[p] for p in PILLARS]
+        municipality_pillar_vals = [f.get(f"pillar_{p}", 50) for p in PILLARS]
+        avg_pillar_vals = [df[f"pillar_{p}"].mean() for p in PILLARS]
 
         fig_radar = go.Figure()
         fig_radar.add_trace(go.Scatterpolar(
-            r=municipality_vals + [municipality_vals[0]],
-            theta=cats + [cats[0]],
+            r=municipality_pillar_vals + [municipality_pillar_vals[0]],
+            theta=pillar_labels + [pillar_labels[0]],
             name=focus, fill="toself", opacity=0.4,
             line=dict(color="#1E50B4"),
         ))
         fig_radar.add_trace(go.Scatterpolar(
-            r=avg_vals + [avg_vals[0]],
-            theta=cats + [cats[0]],
+            r=avg_pillar_vals + [avg_pillar_vals[0]],
+            theta=pillar_labels + [pillar_labels[0]],
             name="National Average", fill="toself", opacity=0.2,
             line=dict(color="#888", dash="dash"),
         ))
         fig_radar.update_layout(
             polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
-            title=f"Profile: {focus} vs Average",
-            height=420,
+            title=f"Pillar Profile: {focus} vs Average",
+            height=450,
         )
         st.plotly_chart(fig_radar, use_container_width=True)
 
-    # ── Weather detail ──
-    st.subheader(f"Live Weather: {focus}")
-    wc1, wc2, wc3, wc4, wc5 = st.columns(5)
-    wc1.metric("Temperature", f"{f.get('temperature', 'N/A')}C")
-    wc2.metric("Humidity", f"{f.get('humidity', 'N/A')}%")
-    wc3.metric("Wind", f"{f.get('wind_kmh', 'N/A')} km/h")
-    wc4.metric("Sunshine (7d avg)", f"{f.get('avg_sunshine_hrs', 'N/A')} hrs")
-    wc5.metric("UV Index (7d avg)", f"{f.get('avg_uv', 'N/A')}")
+    # ── 9-indicator radar ──
+    st.subheader("Full 9-Indicator Profile")
+    cats_9 = [COMPONENT_NAMES[k][:14] for k in COMPONENT_NAMES]
+    mun_vals_9 = [f.get(f"norm_{k}", 50) for k in COMPONENT_NAMES]
+    avg_vals_9 = [df[f"norm_{k}"].mean() for k in COMPONENT_NAMES]
+
+    fig_r9 = go.Figure()
+    fig_r9.add_trace(go.Scatterpolar(
+        r=mun_vals_9 + [mun_vals_9[0]],
+        theta=cats_9 + [cats_9[0]],
+        name=focus, fill="toself", opacity=0.4, line=dict(color="#1E50B4"),
+    ))
+    fig_r9.add_trace(go.Scatterpolar(
+        r=avg_vals_9 + [avg_vals_9[0]],
+        theta=cats_9 + [cats_9[0]],
+        name="National Average", fill="toself", opacity=0.2,
+        line=dict(color="#888", dash="dash"),
+    ))
+    fig_r9.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+        height=500,
+    )
+    st.plotly_chart(fig_r9, use_container_width=True)
+
+    # ── Weather + Environment detail ──
+    st.subheader(f"Environment Detail: {focus}")
+    wc1, wc2, wc3, wc4, wc5, wc6 = st.columns(6)
+    wc1.metric("Weather Score", f"{f.get('weather_score', 'N/A')}")
+    wc2.metric("Air Quality", f"{f.get('air_quality_score', 'N/A')}")
+    wc3.metric("Coastal Score", f"{f.get('coastal_score', 'N/A')}")
+    wc4.metric("Wind", f"{f.get('wind_kmh', 'N/A')} km/h")
+    wc5.metric("Sunshine (7d)", f"{f.get('avg_sunshine_hrs', 'N/A')} hrs")
+    wc6.metric("UV Index", f"{f.get('avg_uv', 'N/A')}")
 
     # ── Insight ──
     yoy = f.get("yoy_arrivals_%", 0)
@@ -378,20 +426,20 @@ elif page == "Municipality Deep-Dive":
     if f["resilience_score"] >= 65:
         insight = (
             f"**{focus}** ({f['region']}) shows **HIGH** resilience (score {f['resilience_score']:.1f}). "
-            f"Eurostat {euro_year} arrivals: {arrivals_str} (YoY: {yoy_str}). "
-            f"Strong tourism activity supported by favorable conditions."
+            f"Eurostat arrivals: {arrivals_str} (YoY: {yoy_str}). "
+            f"Wikipedia awareness: {f.get('wiki_views', 0):,.0f} views."
         )
     elif f["resilience_score"] >= 45:
         insight = (
-            f"**{focus}** ({f['region']}) is in the **MODERATE** zone (score {f['resilience_score']:.1f}). "
-            f"Eurostat {euro_year} arrivals: {arrivals_str} (YoY: {yoy_str}). "
-            f"Room for improvement in underperforming components — see waterfall chart."
+            f"**{focus}** ({f['region']}) is in the **MODERATE** zone ({f['resilience_score']:.1f}). "
+            f"Eurostat arrivals: {arrivals_str} (YoY: {yoy_str}). "
+            f"Check underperforming pillars in the radar chart."
         )
     else:
         insight = (
-            f"**{focus}** ({f['region']}) is in the **CRITICAL** zone (score {f['resilience_score']:.1f}). "
-            f"Eurostat {euro_year} arrivals: {arrivals_str} (YoY: {yoy_str}). "
-            f"Immediate attention needed. Weather score: {f['weather_score']:.1f}/100."
+            f"**{focus}** ({f['region']}) is in the **CRITICAL** zone ({f['resilience_score']:.1f}). "
+            f"Eurostat arrivals: {arrivals_str} (YoY: {yoy_str}). "
+            f"Seasonality score: {f.get('seasonality_score', 'N/A')}/100."
         )
     st.markdown(f"<div class='insight-box'>{insight}</div>", unsafe_allow_html=True)
 
@@ -403,24 +451,21 @@ elif page == "Trends & Time Series":
     st.markdown("""
     <div class='main-header'>
         <h1>Tourism Demand Trends</h1>
-        <p>Google Trends real-time data + Eurostat historical arrivals</p>
+        <p>Google Trends + Wikipedia Pageviews + Eurostat historical data</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Google Trends time series ──
+    # ── Google Trends ──
     st.subheader("Google Trends: Tourism Keywords (Greece)")
-
     if not df_trends.empty:
         kw_cols = [c for c in df_trends.columns if c not in ("date", "isPartial", "demand_index")]
         fig_trends = go.Figure()
         colors = px.colors.qualitative.Set2
         for i, kw in enumerate(kw_cols):
             fig_trends.add_trace(go.Scatter(
-                x=df_trends["date"], y=df_trends[kw],
-                name=kw, mode="lines",
+                x=df_trends["date"], y=df_trends[kw], name=kw, mode="lines",
                 line=dict(color=colors[i % len(colors)], width=2),
             ))
-        # Add composite
         fig_trends.add_trace(go.Scatter(
             x=df_trends["date"], y=df_trends["demand_index"],
             name="Demand Index (mean)", mode="lines",
@@ -428,60 +473,55 @@ elif page == "Trends & Time Series":
         ))
         fig_trends.update_layout(
             height=400, margin=dict(t=10, b=10),
-            yaxis_title="Search Interest (0-100)",
-            xaxis_title="Date",
+            yaxis_title="Search Interest (0-100)", xaxis_title="Date",
             legend=dict(orientation="h", y=-0.15),
         )
         st.plotly_chart(fig_trends, use_container_width=True)
-
-        st.markdown(f"""
-        <div class='data-source'>
-        Source: Google Trends API via pytrends | Keywords: {', '.join(kw_cols)} |
-        Latest demand index: {df_trends['demand_index'].iloc[-1]:.1f} |
-        Period: {df_trends['date'].iloc[0].strftime('%Y-%m-%d')} to {df_trends['date'].iloc[-1].strftime('%Y-%m-%d')}
-        </div>
-        """, unsafe_allow_html=True)
     else:
         st.warning("Google Trends data unavailable.")
 
     st.divider()
 
+    # ── Wikipedia Pageviews ──
+    st.subheader("Wikipedia Pageviews: Destination Awareness")
+    if "wiki_views" in df.columns:
+        wiki_sorted = df.sort_values("wiki_views", ascending=True)
+        fig_wiki = go.Figure(go.Bar(
+            x=wiki_sorted["wiki_views"], y=wiki_sorted["dimos"],
+            orientation="h", marker_color="#FF9800",
+            text=wiki_sorted["wiki_views"].apply(lambda v: f"{v:,.0f}"),
+            textposition="outside",
+        ))
+        fig_wiki.update_layout(
+            height=420, margin=dict(l=0, r=80, t=10, b=10),
+            xaxis_title="Pageviews (en+de+fr, last 3 months)",
+        )
+        st.plotly_chart(fig_wiki, use_container_width=True)
+        st.markdown("""
+        <div class='data-source'>
+        Source: Wikimedia Pageviews API | Languages: en + de + fr |
+        Period: last 3 complete months | Proxy for international tourism awareness
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.divider()
+
     # ── Eurostat Historical ──
     st.subheader("Eurostat: Tourism Arrivals by Region (NUTS-2)")
-
     if not df_euro.empty:
-        # Pivot for chart
         nuts_labels = {m["nuts2"]: m["region"] for m in MUNICIPALITIES.values()}
         df_euro_plot = df_euro.copy()
         df_euro_plot["region"] = df_euro_plot["nuts2"].map(nuts_labels).fillna(df_euro_plot["nuts2"])
         df_euro_plot = df_euro_plot.drop_duplicates(subset=["region", "year"])
 
         fig_euro = px.bar(
-            df_euro_plot, x="year", y="arrivals", color="region",
-            barmode="group",
+            df_euro_plot, x="year", y="arrivals", color="region", barmode="group",
             labels={"arrivals": "Arrivals", "year": "Year"},
-            color_discrete_sequence=px.colors.qualitative.Set2,
-            height=420,
+            color_discrete_sequence=px.colors.qualitative.Set2, height=420,
         )
-        fig_euro.update_layout(
-            margin=dict(t=10, b=10),
-            xaxis=dict(dtick=1),
-            legend=dict(orientation="h", y=-0.15),
-        )
+        fig_euro.update_layout(margin=dict(t=10, b=10), xaxis=dict(dtick=1),
+                               legend=dict(orientation="h", y=-0.15))
         st.plotly_chart(fig_euro, use_container_width=True)
-
-        # Nights spent
-        st.subheader("Eurostat: Nights Spent by Region")
-        fig_nights = px.bar(
-            df_euro_plot, x="year", y="nights", color="region",
-            barmode="group",
-            labels={"nights": "Nights Spent", "year": "Year"},
-            color_discrete_sequence=px.colors.qualitative.Pastel,
-            height=420,
-        )
-        fig_nights.update_layout(margin=dict(t=10, b=10), xaxis=dict(dtick=1),
-                                  legend=dict(orientation="h", y=-0.15))
-        st.plotly_chart(fig_nights, use_container_width=True)
 
         # YoY table
         st.subheader("Year-over-Year Changes")
@@ -490,21 +530,11 @@ elif page == "Trends & Time Series":
         st.dataframe(
             latest[["region", "nuts2", "year", "arrivals", "nights", "avg_stay", "yoy_arrivals_%"]].style
             .format({
-                "arrivals": "{:,.0f}",
-                "nights": "{:,.0f}",
-                "avg_stay": "{:.2f}",
+                "arrivals": "{:,.0f}", "nights": "{:,.0f}", "avg_stay": "{:.2f}",
                 "yoy_arrivals_%": "{:+.1f}%",
-            }, na_rep="N/A")
-            ,
+            }, na_rep="N/A"),
             use_container_width=True,
         )
-
-        st.markdown("""
-        <div class='data-source'>
-        Source: Eurostat REST API | Datasets: tour_occ_arn2, tour_occ_nin2 |
-        Level: NUTS-2 | Accommodation: Hotels & similar (I551-I553)
-        </div>
-        """, unsafe_allow_html=True)
     else:
         st.warning("Eurostat data unavailable.")
 
@@ -516,88 +546,106 @@ else:
     st.markdown("""
     <div class='main-header'>
         <h1>Methodology & Data Sources</h1>
-        <p>Transparent, reproducible, open-data composite index</p>
+        <p>Transparent, reproducible, open-data composite index (3x3 balanced pillars)</p>
     </div>
     """, unsafe_allow_html=True)
 
     st.markdown(f"### Composite Resilience Index (v{datetime.now().strftime('%Y.%m')})")
     st.markdown(f"**Weighting method:** {weighting_method}")
 
-    st.markdown("### Measured Variables")
+    st.markdown("### 3x3 Pillar Architecture")
     st.markdown("""
-    The Resilience Score is computed **in real-time** from 3 live data sources,
-    producing 5 normalized indicators across 3 pillars. Weights are derived via
-    **Two-Stage Pillar Entropy** to prevent correlated supply indicators from
-    dominating single-indicator pillars (demand, weather).
+    The Resilience Score is computed from **9 indicators** across **3 balanced pillars**.
+    Each pillar has exactly 3 indicators, enabling Shannon Entropy at both levels:
     """)
 
-    # Dynamic weights table
-    w_rows = []
+    # Architecture table
+    arch_rows = []
     sources_info = {
-        "arrivals": ("Eurostat `tour_occ_arn2` (NUTS-2)", "Annual"),
-        "nights": ("Eurostat `tour_occ_nin2` (NUTS-2)", "Annual"),
+        "arrivals": ("Eurostat `tour_occ_arn2`", "Annual"),
+        "nights": ("Eurostat `tour_occ_nin2`", "Annual"),
+        "avg_stay": ("Derived (nights/arrivals)", "Annual"),
         "demand": ("Google Trends (pytrends)", "Weekly"),
+        "wiki_views": ("Wikipedia Pageviews API (en+de+fr)", "Monthly"),
+        "seasonality": ("Eurostat monthly `tour_occ_nim` / fallback", "Annual"),
         "weather": ("Open-Meteo Forecast API", "Hourly"),
-        "avg_stay": ("Derived (nights / arrivals)", "Annual"),
+        "air_quality": ("Open-Meteo Air Quality API", "Hourly"),
+        "coastal": ("Open-Meteo Marine API", "Daily"),
     }
-    for var in weights:
-        src, freq = sources_info.get(var, ("", ""))
-        w_rows.append({
-            "Component": COMPONENT_NAMES.get(var, var),
-            "Weight": f"{weights[var]:.1%}",
-            "Source": src,
-            "Update": freq,
-        })
-    st.table(pd.DataFrame(w_rows))
 
-    st.markdown("### Two-Stage Pillar Entropy Weighting")
+    pw = {}
+    if pillar_result:
+        pw = pillar_result.get("pillar_weights", {})
+
+    for pname, pdef in PILLARS.items():
+        for var in pdef["indicators"]:
+            src, freq = sources_info.get(var, ("", ""))
+            arch_rows.append({
+                "Pillar": PILLAR_NAMES[pname],
+                "Indicator": COMPONENT_NAMES.get(var, var),
+                "Weight": f"{weights.get(var, 0):.1%}",
+                "Source": src,
+                "Update": freq,
+            })
+    st.table(pd.DataFrame(arch_rows))
+
+    st.markdown("### Two-Stage Entropy Weighting")
     st.markdown(f"""
-    **Problem with flat entropy:** The 5 indicators are not independent — arrivals,
-    nights, and avg_stay are correlated supply-side metrics. Flat Shannon Entropy
-    would over-weight this cluster (3 variables competing) while under-weighting
-    demand (national-level, uniform across municipalities → entropy ≈ 1 → weight ≈ 0).
+    **Why two-stage?** The 9 indicators are grouped by conceptual domain. Flat entropy
+    would let the most heterogeneous cluster dominate. Two-stage ensures each pillar
+    competes on equal footing.
 
-    **Solution — Two-stage approach:**
-
-    | Stage | What | How |
-    |-------|------|-----|
-    | **Stage 1** | Within-pillar weights | Shannon Entropy among indicators in each pillar |
-    | **Stage 2** | Pillar weights | Equal weight: **1/3** per pillar |
-
-    **Pillars:**
-    | Pillar | Indicators | Pillar Weight |
-    |--------|-----------|---------------|
-    | Supply Capacity | Arrivals, Nights, Avg Stay | 33.3% |
-    | Demand Pressure | Tourism Demand | 33.3% |
-    | Environmental | Weather Attractiveness | 33.3% |
-
-    **Final weight** = pillar_weight × within_pillar_weight
-
-    **Shannon Entropy (within multi-indicator pillars):**
+    **Architecture:**
     ```
-    Step 1:  p_ij = x_ij / Σ_i(x_ij)                  — proportion
-    Step 2:  E_j  = -(1/ln(n)) × Σ_i[p_ij × ln(p_ij)] — entropy (0=max info, 1=no info)
-    Step 3:  d_j  = 1 - E_j                             — diversification degree
-    Step 4:  w_j  = d_j / Σ_k(d_k)                      — normalized within-pillar weight
+                        RESILIENCE SCORE
+                              |
+              Stage 2: Cross-pillar entropy
+              |               |               |
+        Supply (Ws)     Demand (Wd)     Environment (We)
+              |               |               |
+        Stage 1: Within-pillar entropy
+        |    |    |     |    |    |     |    |    |
+       arr nght stay  dem  wiki seas  weat  aqi coast
     ```
 
+    **Stage 1** — Within each pillar, Shannon Entropy assigns weights to 3 indicators
+    based on cross-municipality variation (Sigma = 1 per pillar).
+
+    **Stage 2** — Compute pillar composite scores (weighted sum within pillar),
+    then Shannon Entropy on the 3 pillar scores to determine pillar-level weights (Sigma = 1).
+
+    **Final weight** = pillar_weight x within_pillar_weight
+
+    **Shannon Entropy formula (applied at both stages):**
+    ```
+    p_ij = x_ij / Sigma_i(x_ij)                         (proportion)
+    E_j  = -(1/ln(n)) x Sigma_i[p_ij x ln(p_ij)]       (entropy, 0=max info, 1=no info)
+    d_j  = 1 - E_j                                       (diversification)
+    w_j  = d_j / Sigma_k(d_k)                            (normalized weight)
+    ```
     Where n = {len(MUNICIPALITIES)} municipalities.
     """)
 
-    # Show pillar diagnostics if available
+    # Pillar diagnostics
     if pillar_result:
-        st.markdown("### Pillar Weight Diagnostics (Current Data)")
+        st.markdown("### Pillar Weight Diagnostics")
+
+        # Cross-pillar weights
+        col_pw = st.columns(3)
+        for idx, pname in enumerate(PILLARS):
+            p_weight = pw.get(pname, 0)
+            col_pw[idx].metric(PILLAR_NAMES[pname], f"{p_weight:.1%}")
 
         for pname, pdet in pillar_result["pillar_details"].items():
-            with st.expander(f"Pillar: {PILLAR_NAMES[pname]} (weight = {pdet['pillar_weight']:.2%})"):
+            with st.expander(f"Pillar: {PILLAR_NAMES[pname]} (weight = {pw.get(pname, 0):.2%})"):
                 diag_rows = []
                 for var, ww in pdet["within_weights"].items():
                     row = {
                         "Variable": COMPONENT_NAMES.get(var, var),
                         "Within-Pillar w": ww,
-                        "Final Weight": pillar_result["weights"][var],
+                        "Final Weight": pillar_result["weights"].get(var, 0),
                     }
-                    if pdet["entropy"][var] is not None:
+                    if pdet["entropy"].get(var) is not None:
                         row["E_j (Entropy)"] = pdet["entropy"][var]
                         row["d_j (Diversity)"] = pdet["diversity"][var]
                     diag_rows.append(row)
@@ -612,42 +660,38 @@ else:
     ### Composite Score Formula
 
     ```
-    Score = (1/3) × [w₁·Arrivals + w₂·Nights + w₃·AvgStay]   ← Supply (entropy-weighted)
-          + (1/3) × [Demand]                                    ← Demand
-          + (1/3) × [Weather]                                   ← Environment
+    Pillar_s = w1*Arrivals + w2*Nights + w3*AvgStay       (supply, entropy-weighted)
+    Pillar_d = w4*Demand + w5*WikiViews + w6*Seasonality   (demand, entropy-weighted)
+    Pillar_e = w7*Weather + w8*AirQuality + w9*Coastal     (environment, entropy-weighted)
+
+    Score = Ws*Pillar_s + Wd*Pillar_d + We*Pillar_e
     ```
-
-    Where `w₁, w₂, w₃` are Shannon Entropy weights within the Supply pillar,
-    and all indicator values are min-max normalized to 0-100.
+    Where all indicators are min-max normalized to 0-100, and Ws+Wd+We=1 (entropy-derived).
     """)
 
+    st.markdown("### New Indicators (v2)")
     st.markdown("""
-    ### Weather Attractiveness Score
-
-    The weather sub-score is a composite of:
-    - **Temperature** (optimal: 25-30C, penalty for deviation)
-    - **Sunshine hours** (7-day forecast average)
-    - **Wind speed** (penalty above 20 km/h)
-    - **Rain** (penalty for active precipitation)
+    | Indicator | Pillar | What it measures | Why it matters |
+    |-----------|--------|-----------------|----------------|
+    | **Destination Awareness** | Demand | Wikipedia pageviews (en+de+fr, 3 months) | Proxy for international recognition; destination-specific unlike Google Trends |
+    | **Seasonality Balance** | Demand | HHI of monthly tourism distribution | Low seasonality = year-round demand = higher resilience |
+    | **Air Quality** | Environment | European AQI (PM2.5, PM10, O3) | Health-conscious tourism; differentiates urban vs island destinations |
+    | **Coastal Comfort** | Environment | Wave height (7-day avg) | Sea conditions for Greece's dominant coastal tourism model |
     """)
 
+    st.markdown("### Zone Classification")
     st.markdown("""
-    ### Zone Classification
-
-    | Zone | Score Range | Interpretation |
-    |------|-----------|----------------|
+    | Zone | Score | Interpretation |
+    |------|-------|----------------|
     | **ΥΨΗΛΗ** (High) | >= 65 | Strong resilience, sustainable trajectory |
-    | **ΜΕΣΑΙΑ** (Moderate) | 45 - 64 | Functional with vulnerabilities |
+    | **ΜΕΣΑΙΑ** (Moderate) | 45-64 | Functional with vulnerabilities |
     | **ΧΑΜΗΛΗ** (Low) | < 45 | Critical, requires policy intervention |
     """)
 
-    st.markdown("""
-    ### NUTS-2 to Municipality Mapping
+    st.markdown(f"""
+    ### NUTS-2 to Municipality Mapping ({len(MUNICIPALITIES)} destinations)
 
-    Eurostat data is at NUTS-2 level. We apply proportional tourism-share
-    coefficients to estimate municipality-level values:
-
-    | Municipality | NUTS-2 | Region | Share |
+    | Municipality | NUTS-2 | Region | Tourism Share |
     |---|---|---|---|
     | Ρόδος | EL42 | Ν. Αιγαίο | 50% |
     | Σαντορίνη | EL42 | Ν. Αιγαίο | 28% |
@@ -668,7 +712,7 @@ else:
     st.markdown("""
     ### Tier Upgrade Path
 
-    - **Tier 0** (Free) - Open data, 14 municipalities, Two-Stage Pillar Entropy weights
+    - **Tier 0** (Free) - Open data, 14 municipalities, 3x3 Two-Stage Pillar Entropy
     - **Tier 1** (Regional Lite) - All NUTS-3, SHAP + Entropy comparison
     - **Tier 2** (Analytics) - Shift-Share, Martin Index, TFT forecasts
     - **Tier 3** (DSS) - Full decision support, scenario engine, API access

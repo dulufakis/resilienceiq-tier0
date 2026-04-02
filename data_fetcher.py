@@ -22,24 +22,48 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # Municipality reference table
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 MUNICIPALITIES = {
-    "Χανιά":        {"lat": 35.5138, "lon": 24.0180, "nuts2": "EL43", "region": "Κρήτη"},
-    "Ρόδος":        {"lat": 36.4341, "lon": 28.2176, "nuts2": "EL42", "region": "Ν. Αιγαίο"},
-    "Μύκονος":      {"lat": 37.4467, "lon": 25.3289, "nuts2": "EL42", "region": "Ν. Αιγαίο"},
-    "Σαντορίνη":    {"lat": 36.3932, "lon": 25.4615, "nuts2": "EL42", "region": "Ν. Αιγαίο"},
-    "Κέρκυρα":      {"lat": 39.6243, "lon": 19.9217, "nuts2": "EL62", "region": "Ιόνια Νησιά"},
-    "Αθήνα":        {"lat": 37.9838, "lon": 23.7275, "nuts2": "EL30", "region": "Αττική"},
-    "Θεσσαλονίκη":  {"lat": 40.6401, "lon": 22.9444, "nuts2": "EL52", "region": "Κ. Μακεδονία"},
-    "Ηράκλειο":     {"lat": 35.3387, "lon": 25.1442, "nuts2": "EL43", "region": "Κρήτη"},
-    "Ναύπλιο":      {"lat": 37.5675, "lon": 22.8017, "nuts2": "EL65", "region": "Πελοπόννησος"},
+    "Χανιά":            {"lat": 35.5138, "lon": 24.0180, "nuts2": "EL43", "region": "Κρήτη"},
+    "Ρόδος":            {"lat": 36.4341, "lon": 28.2176, "nuts2": "EL42", "region": "Ν. Αιγαίο"},
+    "Μύκονος":          {"lat": 37.4467, "lon": 25.3289, "nuts2": "EL42", "region": "Ν. Αιγαίο"},
+    "Σαντορίνη":        {"lat": 36.3932, "lon": 25.4615, "nuts2": "EL42", "region": "Ν. Αιγαίο"},
+    "Κέρκυρα":          {"lat": 39.6243, "lon": 19.9217, "nuts2": "EL62", "region": "Ιόνια Νησιά"},
+    "Αθήνα":            {"lat": 37.9838, "lon": 23.7275, "nuts2": "EL30", "region": "Αττική"},
+    "Θεσσαλονίκη":      {"lat": 40.6401, "lon": 22.9444, "nuts2": "EL52", "region": "Κ. Μακεδονία"},
+    "Ηράκλειο":         {"lat": 35.3387, "lon": 25.1442, "nuts2": "EL43", "region": "Κρήτη"},
+    "Ναύπλιο":          {"lat": 37.5675, "lon": 22.8017, "nuts2": "EL65", "region": "Πελοπόννησος"},
+    "Ιωάννινα":         {"lat": 39.6650, "lon": 20.8537, "nuts2": "EL54", "region": "Ήπειρος"},
+    "Λάρισα":           {"lat": 39.6390, "lon": 22.4191, "nuts2": "EL61", "region": "Θεσσαλία"},
+    "Πάτρα":            {"lat": 38.2466, "lon": 21.7346, "nuts2": "EL63", "region": "Δ. Ελλάδα"},
+    "Αλεξανδρούπολη":   {"lat": 40.8469, "lon": 25.8743, "nuts2": "EL51", "region": "Α. Μακεδονία & Θράκη"},
+}
+
+# Pillar definitions: groups of correlated indicators
+# Equal pillar weights (1/3 each) + within-pillar entropy
+PILLARS = {
+    "supply": {
+        "label": "Supply Capacity",
+        "indicators": ["arrivals", "nights", "avg_stay"],
+        "pillar_weight": 1 / 3,
+    },
+    "demand": {
+        "label": "Demand Pressure",
+        "indicators": ["demand"],
+        "pillar_weight": 1 / 3,
+    },
+    "environment": {
+        "label": "Environmental",
+        "indicators": ["weather"],
+        "pillar_weight": 1 / 3,
+    },
 }
 
 # Fallback weights (used only if entropy computation fails)
 WEIGHTS_FALLBACK = {
-    "arrivals":  0.25,
-    "nights":    0.20,
-    "demand":    0.25,
-    "weather":   0.15,
-    "avg_stay":  0.15,
+    "arrivals":  0.1333,   # (1/3) * 0.40
+    "nights":    0.1000,   # (1/3) * 0.30
+    "avg_stay":  0.1000,   # (1/3) * 0.30
+    "demand":    0.3333,   # (1/3) * 1.0
+    "weather":   0.3333,   # (1/3) * 1.0
 }
 
 # Component labels for display
@@ -49,6 +73,12 @@ COMPONENT_NAMES = {
     "demand": "Tourism Demand",
     "weather": "Weather Attractiveness",
     "avg_stay": "Average Stay Duration",
+}
+
+PILLAR_NAMES = {
+    "supply": "Supply Capacity",
+    "demand": "Demand Pressure",
+    "environment": "Environmental",
 }
 
 
@@ -124,6 +154,76 @@ def compute_entropy_weights(norm_matrix: pd.DataFrame) -> dict:
         "entropy": entropy,
         "diversity": diversity,
         "proportions": p,
+    }
+
+
+def compute_pillar_weights(norm_matrix: pd.DataFrame) -> dict:
+    """
+    Two-stage weighting: within-pillar Shannon Entropy + equal pillar weights.
+
+    Stage 1 — For multi-indicator pillars (supply: arrivals, nights, avg_stay),
+              compute entropy weights among those indicators (sum = 1 within pillar).
+    Stage 2 — Each pillar receives equal weight (1/3).
+
+    Final indicator weight = pillar_weight × within_pillar_weight.
+
+    This avoids the correlation bias where 3 supply-side indicators would
+    dominate the single demand and weather indicators under flat entropy.
+    """
+    key_map = {
+        "norm_arrivals": "arrivals", "norm_nights": "nights",
+        "norm_demand": "demand", "norm_weather": "weather",
+        "norm_avg_stay": "avg_stay",
+    }
+    df = norm_matrix.rename(columns=key_map)
+
+    flat_weights = {}
+    pillar_details = {}
+
+    for pillar_name, pillar_def in PILLARS.items():
+        indicators = pillar_def["indicators"]
+        pw = pillar_def["pillar_weight"]
+
+        if len(indicators) == 1:
+            # Single-indicator pillar: weight = pillar_weight × 1.0
+            var = indicators[0]
+            flat_weights[var] = round(pw, 4)
+            pillar_details[pillar_name] = {
+                "pillar_weight": pw,
+                "within_weights": {var: 1.0},
+                "entropy": {var: None},
+                "diversity": {var: None},
+            }
+        else:
+            # Multi-indicator pillar: entropy within pillar
+            sub_df = df[indicators]
+            try:
+                ent = compute_entropy_weights(sub_df)
+                within_w = ent["weights"]
+                for var in indicators:
+                    flat_weights[var] = round(pw * within_w[var], 4)
+                pillar_details[pillar_name] = {
+                    "pillar_weight": pw,
+                    "within_weights": within_w,
+                    "entropy": ent["entropy"],
+                    "diversity": ent["diversity"],
+                }
+            except Exception as e:
+                log.warning(f"Within-pillar entropy failed for {pillar_name}: {e}")
+                uniform = 1.0 / len(indicators)
+                for var in indicators:
+                    flat_weights[var] = round(pw * uniform, 4)
+                pillar_details[pillar_name] = {
+                    "pillar_weight": pw,
+                    "within_weights": {v: uniform for v in indicators},
+                    "entropy": {v: None for v in indicators},
+                    "diversity": {v: None for v in indicators},
+                }
+
+    log.info(f"Two-stage pillar weights: {flat_weights}")
+    return {
+        "weights": flat_weights,
+        "pillar_details": pillar_details,
     }
 
 
@@ -404,12 +504,16 @@ def build_resilience_snapshot(
     # Multiple municipalities share NUTS2 — proportional split heuristic
     # (Eurostat is region-level; we distribute proportionally by known tourism share)
     tourism_shares = {
-        "Χανιά": 0.35, "Ηράκλειο": 0.65,          # EL43 Kriti
-        "Μύκονος": 0.22, "Σαντορίνη": 0.28, "Ρόδος": 0.50,  # EL42 Notio Aigaio
-        "Κέρκυρα": 1.0,                              # EL62 Ionia Nisia
-        "Αθήνα": 1.0,                                # EL30 Attiki
-        "Θεσσαλονίκη": 1.0,                          # EL52 K. Makedonia
-        "Ναύπλιο": 0.30,                             # EL65 Peloponnisos
+        "Χανιά": 0.35, "Ηράκλειο": 0.65,                       # EL43 Kriti
+        "Μύκονος": 0.22, "Σαντορίνη": 0.28, "Ρόδος": 0.50,    # EL42 Notio Aigaio
+        "Κέρκυρα": 1.0,                                         # EL62 Ionia Nisia
+        "Αθήνα": 1.0,                                           # EL30 Attiki
+        "Θεσσαλονίκη": 1.0,                                     # EL52 K. Makedonia
+        "Ναύπλιο": 0.30,                                        # EL65 Peloponnisos
+        "Ιωάννινα": 0.50,                                       # EL54 Ipeiros
+        "Λάρισα": 0.40,                                         # EL61 Thessalia
+        "Πάτρα": 0.45,                                          # EL63 Dytiki Ellada
+        "Αλεξανδρούπολη": 0.35,                                 # EL51 An. Makedonia & Thraki
     }
     for col in ["arrivals", "nights"]:
         if col in df.columns:
@@ -450,21 +554,19 @@ def build_resilience_snapshot(
     df["norm_weather"] = df["weather_score"] if "weather_score" in df.columns else 50
     df["norm_avg_stay"] = _normalize(df["avg_stay"], lower=1, upper=8) if "avg_stay" in df.columns else 50
 
-    # ── Shannon Entropy Weights (data-driven) ──
+    # ── Two-Stage Pillar Entropy Weights (data-driven) ──
     norm_cols = ["norm_arrivals", "norm_nights", "norm_demand", "norm_weather", "norm_avg_stay"]
-    key_map = {"norm_arrivals": "arrivals", "norm_nights": "nights", "norm_demand": "demand",
-               "norm_weather": "weather", "norm_avg_stay": "avg_stay"}
 
     try:
-        entropy_result = compute_entropy_weights(df[norm_cols].rename(columns=key_map))
-        weights = entropy_result["weights"]
-        df.attrs["entropy_result"] = entropy_result
-        df.attrs["weighting_method"] = "Shannon Entropy"
-        log.info("Using Shannon Entropy weights")
+        pillar_result = compute_pillar_weights(df[norm_cols])
+        weights = pillar_result["weights"]
+        df.attrs["pillar_result"] = pillar_result
+        df.attrs["weighting_method"] = "Two-Stage Pillar Entropy"
+        log.info("Using two-stage pillar entropy weights")
     except Exception as e:
-        log.warning(f"Entropy computation failed ({e}), using fallback weights")
+        log.warning(f"Pillar entropy failed ({e}), using fallback weights")
         weights = WEIGHTS_FALLBACK
-        df.attrs["entropy_result"] = None
+        df.attrs["pillar_result"] = None
         df.attrs["weighting_method"] = "Static (fallback)"
 
     df.attrs["weights"] = weights
@@ -518,17 +620,24 @@ if __name__ == "__main__":
 
     snap, euro, trends, weather = fetch_all()
 
-    print("\n=== SHANNON ENTROPY WEIGHTS ===")
-    ent = snap.attrs.get("entropy_result")
-    if ent:
-        print(f"{'Variable':<22s} {'E_j':>8s} {'d_j':>8s} {'Weight':>8s}")
-        print("-" * 50)
-        for var in ent["weights"]:
-            print(f"{COMPONENT_NAMES.get(var, var):<22s} "
-                  f"{ent['entropy'][var]:8.4f} "
-                  f"{ent['diversity'][var]:8.4f} "
-                  f"{ent['weights'][var]:8.4f}")
-        print(f"{'SUM':<22s} {'':>8s} {'':>8s} {sum(ent['weights'].values()):8.4f}")
+    print("\n=== TWO-STAGE PILLAR ENTROPY WEIGHTS ===")
+    pr = snap.attrs.get("pillar_result")
+    if pr:
+        print(f"\n{'Pillar':<20s} {'Weight':>8s}")
+        print("-" * 30)
+        for pname, pdef in PILLARS.items():
+            print(f"{PILLAR_NAMES[pname]:<20s} {pdef['pillar_weight']:8.2%}")
+
+        print(f"\n{'Variable':<22s} {'Pillar':<14s} {'Within w':>10s} {'Final w':>10s}")
+        print("-" * 60)
+        for pname, pdet in pr["pillar_details"].items():
+            for var, ww in pdet["within_weights"].items():
+                fw = pr["weights"][var]
+                print(f"{COMPONENT_NAMES.get(var, var):<22s} "
+                      f"{PILLAR_NAMES[pname]:<14s} "
+                      f"{ww:10.4f} "
+                      f"{fw:10.4f}")
+        print(f"{'SUM':<22s} {'':>14s} {'':>10s} {sum(pr['weights'].values()):10.4f}")
 
     print("\n=== RESILIENCE SNAPSHOT ===")
     print(snap[["dimos", "region", "arrivals", "nights", "demand_index",

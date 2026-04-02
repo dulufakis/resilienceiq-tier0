@@ -11,7 +11,7 @@ import plotly.express as px
 from datetime import datetime
 
 from data_fetcher import (
-    MUNICIPALITIES, WEIGHTS_FALLBACK, COMPONENT_NAMES,
+    MUNICIPALITIES, WEIGHTS_FALLBACK, COMPONENT_NAMES, PILLARS, PILLAR_NAMES,
     fetch_eurostat_tourism, fetch_google_trends, fetch_weather,
     build_resilience_snapshot,
 )
@@ -109,9 +109,9 @@ df = build_resilience_snapshot(
     shock_arrivals=shock_arrivals,
 )
 
-# Extract entropy diagnostics from attrs, then clear to avoid pandas serialization issues
+# Extract diagnostics from attrs, then clear to avoid pandas serialization issues
 weights = df.attrs.get("weights", WEIGHTS_FALLBACK)
-entropy_result = df.attrs.get("entropy_result")
+pillar_result = df.attrs.get("pillar_result")
 weighting_method = df.attrs.get("weighting_method", "Static")
 df.attrs.clear()
 
@@ -213,9 +213,8 @@ if page == "Dashboard":
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Measured Variables & Shannon Entropy Weights ──
-    with st.expander("Measured Variables & Shannon Entropy Weights"):
-        # Build weights table dynamically
+    # ── Measured Variables & Two-Stage Pillar Weights ──
+    with st.expander("Measured Variables & Two-Stage Pillar Weights"):
         sources = {
             "arrivals": f"Eurostat `tour_occ_arn2` (NUTS-2, {euro_year})",
             "nights": f"Eurostat `tour_occ_nin2` (NUTS-2, {euro_year})",
@@ -223,55 +222,46 @@ if page == "Dashboard":
             "weather": "Open-Meteo Forecast API (hourly)",
             "avg_stay": f"Derived: nights / arrivals ({euro_year})",
         }
-        measures = {
-            "arrivals": "Tourist arrivals at accommodation establishments",
-            "nights": "Total overnight stays — tourism intensity",
-            "demand": "Search interest: ξενοδοχεία, διακοπές, παραλίες, Airbnb Greece",
-            "weather": "Temperature, sunshine, wind, precipitation composite",
-            "avg_stay": "Mean length of stay — destination stickiness proxy",
-        }
 
-        if entropy_result:
-            st.markdown(f"**Weighting Method:** Shannon Entropy (data-driven)")
+        if pillar_result:
+            st.markdown(f"**Weighting Method:** Two-Stage Pillar Entropy")
             st.markdown("""
-Variables with **more heterogeneity** (variation) across municipalities receive **higher weight**
-— they discriminate better between resilient and vulnerable destinations.
+**Stage 1:** Within each pillar, Shannon Entropy assigns weights based on cross-municipality variation.
+**Stage 2:** Each pillar receives **equal weight (1/3)**, preventing correlated supply indicators from dominating.
             """)
 
-            var_rows = []
-            for var in weights:
-                var_rows.append({
-                    "Variable": COMPONENT_NAMES.get(var, var),
-                    "E_j (Entropy)": f"{entropy_result['entropy'][var]:.4f}",
-                    "d_j (Diversity)": f"{entropy_result['diversity'][var]:.4f}",
-                    "Weight": f"{weights[var]:.2%}",
-                    "Source": sources.get(var, ""),
-                    "Measures": measures.get(var, ""),
+            # Pillar summary
+            pillar_rows = []
+            for pname, pdef in PILLARS.items():
+                pillar_rows.append({
+                    "Pillar": PILLAR_NAMES[pname],
+                    "Indicators": ", ".join(COMPONENT_NAMES.get(v, v) for v in pdef["indicators"]),
+                    "Pillar Weight": f"{pdef['pillar_weight']:.2%}",
                 })
+            st.dataframe(pd.DataFrame(pillar_rows), use_container_width=True, hide_index=True)
+
+            # Detailed indicator weights
+            var_rows = []
+            for pname, pdet in pillar_result["pillar_details"].items():
+                for var, ww in pdet["within_weights"].items():
+                    var_rows.append({
+                        "Variable": COMPONENT_NAMES.get(var, var),
+                        "Pillar": PILLAR_NAMES[pname],
+                        "Within-Pillar w": f"{ww:.2%}",
+                        "Final Weight": f"{weights[var]:.2%}",
+                        "Source": sources.get(var, ""),
+                    })
             st.dataframe(pd.DataFrame(var_rows), use_container_width=True, hide_index=True)
 
-            st.markdown("""
-**Shannon Entropy Formula:**
-```
-p_ij = x_ij / Σ_i(x_ij)                        — proportion of municipality i in variable j
-E_j  = -(1/ln(n)) × Σ_i [p_ij × ln(p_ij)]      — entropy (1 = no info, 0 = max info)
-d_j  = 1 - E_j                                   — diversification degree
-w_j  = d_j / Σ_k(d_k)                            — normalized weight (Σw = 1)
-```
-            """)
-
-            # Interpretation
             max_var = max(weights, key=weights.get)
             min_var = min(weights, key=weights.get)
             st.info(
-                f"**Highest weight:** {COMPONENT_NAMES[max_var]} ({weights[max_var]:.1%}) — "
-                f"most heterogeneous across municipalities (E={entropy_result['entropy'][max_var]:.4f}).\n\n"
-                f"**Lowest weight:** {COMPONENT_NAMES[min_var]} ({weights[min_var]:.1%}) — "
-                f"least discriminating (E={entropy_result['entropy'][min_var]:.4f})."
+                f"**Highest weight:** {COMPONENT_NAMES[max_var]} ({weights[max_var]:.1%})\n\n"
+                f"**Lowest weight:** {COMPONENT_NAMES[min_var]} ({weights[min_var]:.1%})"
             )
         else:
             st.markdown("**Weighting Method:** Static (fallback)")
-            st.markdown("Shannon Entropy computation was not available. Using expert-assigned weights.")
+            st.markdown("Pillar entropy computation was not available. Using fallback weights.")
 
     # Export
     csv = df.to_csv(index=False).encode("utf-8")
@@ -536,8 +526,9 @@ else:
     st.markdown("### Measured Variables")
     st.markdown("""
     The Resilience Score is computed **in real-time** from 3 live data sources,
-    producing 5 normalized indicators. Weights are derived via **Shannon Entropy**
-    from the cross-municipality variation in the data itself.
+    producing 5 normalized indicators across 3 pillars. Weights are derived via
+    **Two-Stage Pillar Entropy** to prevent correlated supply indicators from
+    dominating single-indicator pillars (demand, weather).
     """)
 
     # Dynamic weights table
@@ -559,76 +550,75 @@ else:
         })
     st.table(pd.DataFrame(w_rows))
 
-    st.markdown("### Shannon Entropy Weighting")
-    st.markdown("""
-    Unlike expert-assigned (static) weights, **Shannon Entropy** derives weights
-    objectively from the data:
+    st.markdown("### Two-Stage Pillar Entropy Weighting")
+    st.markdown(f"""
+    **Problem with flat entropy:** The 5 indicators are not independent — arrivals,
+    nights, and avg_stay are correlated supply-side metrics. Flat Shannon Entropy
+    would over-weight this cluster (3 variables competing) while under-weighting
+    demand (national-level, uniform across municipalities → entropy ≈ 1 → weight ≈ 0).
 
-    - Variables with **more heterogeneity** across municipalities get **higher weight**
-      (they discriminate better between resilient and vulnerable destinations)
-    - Variables with **uniform values** across all municipalities get **lower weight**
-      (they carry no discriminating information)
+    **Solution — Two-stage approach:**
 
-    **Mathematical framework:**
+    | Stage | What | How |
+    |-------|------|-----|
+    | **Stage 1** | Within-pillar weights | Shannon Entropy among indicators in each pillar |
+    | **Stage 2** | Pillar weights | Equal weight: **1/3** per pillar |
 
+    **Pillars:**
+    | Pillar | Indicators | Pillar Weight |
+    |--------|-----------|---------------|
+    | Supply Capacity | Arrivals, Nights, Avg Stay | 33.3% |
+    | Demand Pressure | Tourism Demand | 33.3% |
+    | Environmental | Weather Attractiveness | 33.3% |
+
+    **Final weight** = pillar_weight × within_pillar_weight
+
+    **Shannon Entropy (within multi-indicator pillars):**
     ```
-    Step 1:  p_ij = x_ij / Σ_i(x_ij)                  — proportion of municipality i in variable j
-    Step 2:  E_j  = -(1/ln(n)) × Σ_i[p_ij × ln(p_ij)] — entropy of variable j (0 = max info, 1 = no info)
+    Step 1:  p_ij = x_ij / Σ_i(x_ij)                  — proportion
+    Step 2:  E_j  = -(1/ln(n)) × Σ_i[p_ij × ln(p_ij)] — entropy (0=max info, 1=no info)
     Step 3:  d_j  = 1 - E_j                             — diversification degree
-    Step 4:  w_j  = d_j / Σ_k(d_k)                      — normalized weight (Σw = 1)
+    Step 4:  w_j  = d_j / Σ_k(d_k)                      — normalized within-pillar weight
     ```
 
-    Where n = number of municipalities ({len(MUNICIPALITIES)}).
+    Where n = {len(MUNICIPALITIES)} municipalities.
     """)
 
-    # Show entropy diagnostics if available
-    if entropy_result:
-        st.markdown("### Entropy Diagnostics (Current Data)")
-        diag_rows = []
-        for var in weights:
-            diag_rows.append({
-                "Variable": COMPONENT_NAMES.get(var, var),
-                "E_j (Entropy)": entropy_result["entropy"][var],
-                "d_j (Diversity)": entropy_result["diversity"][var],
-                "Weight w_j": weights[var],
-            })
-        diag_df = pd.DataFrame(diag_rows)
-        st.dataframe(
-            diag_df.style.format({
-                "E_j (Entropy)": "{:.4f}",
-                "d_j (Diversity)": "{:.4f}",
-                "Weight w_j": "{:.2%}",
-            }),
-            use_container_width=True, hide_index=True,
-        )
+    # Show pillar diagnostics if available
+    if pillar_result:
+        st.markdown("### Pillar Weight Diagnostics (Current Data)")
 
-        # Interpretation
-        max_var = max(weights, key=weights.get)
-        min_var = min(weights, key=weights.get)
-        st.markdown(f"""
-        **Interpretation:**
-        - **{COMPONENT_NAMES[max_var]}** has the highest weight ({weights[max_var]:.1%}) because it shows
-          the most variation across municipalities (E = {entropy_result['entropy'][max_var]:.4f}, lowest entropy).
-        - **{COMPONENT_NAMES[min_var]}** has the lowest weight ({weights[min_var]:.1%}) because it is
-          the most uniform across municipalities (E = {entropy_result['entropy'][min_var]:.4f}, highest entropy).
-        """)
-
-        if weights.get("demand", 0) == 0:
-            st.warning(
-                "**Note:** Tourism Demand (Google Trends) receives weight = 0% because it is a "
-                "national-level indicator — identical across all municipalities, so E = 1.0 (zero "
-                "discriminating power). In Tier 1+, regional Google Trends data would restore its weight."
-            )
+        for pname, pdet in pillar_result["pillar_details"].items():
+            with st.expander(f"Pillar: {PILLAR_NAMES[pname]} (weight = {pdet['pillar_weight']:.2%})"):
+                diag_rows = []
+                for var, ww in pdet["within_weights"].items():
+                    row = {
+                        "Variable": COMPONENT_NAMES.get(var, var),
+                        "Within-Pillar w": ww,
+                        "Final Weight": pillar_result["weights"][var],
+                    }
+                    if pdet["entropy"][var] is not None:
+                        row["E_j (Entropy)"] = pdet["entropy"][var]
+                        row["d_j (Diversity)"] = pdet["diversity"][var]
+                    diag_rows.append(row)
+                diag_df = pd.DataFrame(diag_rows)
+                fmt = {"Within-Pillar w": "{:.2%}", "Final Weight": "{:.2%}"}
+                if "E_j (Entropy)" in diag_df.columns:
+                    fmt["E_j (Entropy)"] = "{:.4f}"
+                    fmt["d_j (Diversity)"] = "{:.4f}"
+                st.dataframe(diag_df.style.format(fmt), use_container_width=True, hide_index=True)
 
     st.markdown("""
     ### Composite Score Formula
 
     ```
-    Score = Σ_j (w_j × norm_j)
+    Score = (1/3) × [w₁·Arrivals + w₂·Nights + w₃·AvgStay]   ← Supply (entropy-weighted)
+          + (1/3) × [Demand]                                    ← Demand
+          + (1/3) × [Weather]                                   ← Environment
     ```
 
-    Where `w_j` are the Shannon Entropy weights and `norm_j` are the min-max
-    normalized values (0-100) of each indicator.
+    Where `w₁, w₂, w₃` are Shannon Entropy weights within the Supply pillar,
+    and all indicator values are min-max normalized to 0-100.
     """)
 
     st.markdown("""
@@ -664,16 +654,20 @@ else:
     | Μύκονος | EL42 | Ν. Αιγαίο | 22% |
     | Ηράκλειο | EL43 | Κρήτη | 65% |
     | Χανιά | EL43 | Κρήτη | 35% |
-    | Κέρκυρα | EL62 | Ιόνια | 100% |
+    | Κέρκυρα | EL62 | Ιόνια Νησιά | 100% |
     | Αθήνα | EL30 | Αττική | 100% |
     | Θεσσαλονίκη | EL52 | Κ. Μακεδονία | 100% |
     | Ναύπλιο | EL65 | Πελοπόννησος | 30% |
+    | Ιωάννινα | EL54 | Ήπειρος | 50% |
+    | Λάρισα | EL61 | Θεσσαλία | 40% |
+    | Πάτρα | EL63 | Δ. Ελλάδα | 45% |
+    | Αλεξανδρούπολη | EL51 | Α. Μακεδονία & Θράκη | 35% |
     """)
 
     st.markdown("""
     ### Tier Upgrade Path
 
-    - **Tier 0** (Free) - Open data, 9 municipalities, Shannon Entropy weights
+    - **Tier 0** (Free) - Open data, 13 municipalities, Two-Stage Pillar Entropy weights
     - **Tier 1** (Regional Lite) - All NUTS-3, SHAP + Entropy comparison
     - **Tier 2** (Analytics) - Shift-Share, Martin Index, TFT forecasts
     - **Tier 3** (DSS) - Full decision support, scenario engine, API access

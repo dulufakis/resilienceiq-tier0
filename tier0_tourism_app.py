@@ -109,10 +109,11 @@ df = build_resilience_snapshot(
     shock_arrivals=shock_arrivals,
 )
 
-# Extract entropy diagnostics from attrs
+# Extract entropy diagnostics from attrs, then clear to avoid pandas serialization issues
 weights = df.attrs.get("weights", WEIGHTS_FALLBACK)
 entropy_result = df.attrs.get("entropy_result")
 weighting_method = df.attrs.get("weighting_method", "Static")
+df.attrs.clear()
 
 
 # =================================================================

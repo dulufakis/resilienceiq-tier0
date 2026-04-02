@@ -1,0 +1,8 @@
+# ResilienceIQ Tier 0 — Requirements
+streamlit>=1.32.0
+plotly>=5.20.0
+pandas>=2.2.0
+numpy>=1.26.0
+openpyxl>=3.1.0
+pytrends>=4.9.2
+requests>=2.31.0

@@ -14,7 +14,7 @@ from datetime import datetime
 from data_fetcher import (
     MUNICIPALITIES, WEIGHTS_FALLBACK, COMPONENT_NAMES, PILLARS, PILLAR_NAMES,
     fetch_eurostat_tourism, fetch_eurostat_seasonality,
-    fetch_google_trends, fetch_wikipedia_pageviews,
+    fetch_google_trends, fetch_destination_trends, fetch_wikipedia_pageviews,
     fetch_weather, fetch_air_quality, fetch_marine,
     build_resilience_snapshot,
 )
@@ -94,9 +94,13 @@ def _fetch_eurostat():
 def _fetch_seasonality():
     return fetch_eurostat_seasonality()
 
-@st.cache_data(ttl=3600, show_spinner="Fetching Google Trends...")
+@st.cache_data(ttl=3600, show_spinner="Fetching Google Trends (national)...")
 def _fetch_trends():
     return fetch_google_trends()
+
+@st.cache_data(ttl=3600, show_spinner="Fetching destination search interest...")
+def _fetch_dest_trends():
+    return fetch_destination_trends()
 
 @st.cache_data(ttl=3600, show_spinner="Fetching Wikipedia pageviews...")
 def _fetch_wiki():
@@ -117,6 +121,7 @@ def _fetch_marine():
 df_euro = _fetch_eurostat()
 df_season = _fetch_seasonality()
 df_trends = _fetch_trends()
+df_dest = _fetch_dest_trends()
 df_wiki = _fetch_wiki()
 df_weather = _fetch_weather()
 df_air = _fetch_air_quality()
@@ -126,7 +131,7 @@ euro_year = df_euro["year"].max() if not df_euro.empty else "N/A"
 
 # Build snapshot (not cached — reacts to shock sliders)
 df = build_resilience_snapshot(
-    df_euro, df_trends, df_weather, df_air, df_marine, df_wiki, df_season,
+    df_euro, df_dest, df_weather, df_air, df_marine, df_wiki, df_season,
     shock_demand=shock_demand, shock_arrivals=shock_arrivals,
 )
 
@@ -224,7 +229,7 @@ if page == "Dashboard":
     st.subheader("Full Data Table (Live)")
     display_cols = [
         "dimos", "region", "arrivals", "nights", "avg_stay",
-        "demand_index", "wiki_views", "seasonality_score",
+        "dest_interest", "wiki_views", "seasonality_score",
         "weather_score", "air_quality_score", "coastal_score",
         "resilience_score", "zone",
     ]
@@ -233,7 +238,7 @@ if page == "Dashboard":
     st.dataframe(
         df[available_cols].style.format({
             "arrivals": "{:,.0f}", "nights": "{:,.0f}", "avg_stay": "{:.2f}",
-            "demand_index": "{:.1f}", "wiki_views": "{:,.0f}",
+            "dest_interest": "{:.1f}", "wiki_views": "{:,.0f}",
             "seasonality_score": "{:.1f}", "weather_score": "{:.1f}",
             "air_quality_score": "{:.1f}", "coastal_score": "{:.1f}",
             "resilience_score": "{:.1f}",
@@ -254,7 +259,7 @@ if page == "Dashboard":
             "arrivals": f"Eurostat tour_occ_arn2 ({euro_year})",
             "nights": f"Eurostat tour_occ_nin2 ({euro_year})",
             "avg_stay": f"Derived: nights/arrivals ({euro_year})",
-            "demand": "Google Trends (pytrends)",
+            "dest_interest": "Google Trends per destination (worldwide)",
             "wiki_views": "Wikipedia Pageviews API (en+de+fr)",
             "seasonality": "Eurostat monthly / fallback",
             "weather": "Open-Meteo Forecast API",
@@ -324,7 +329,7 @@ elif page == "Municipality Deep-Dive":
 
     arrivals_str = f"{f['arrivals']:,.0f}" if pd.notna(f.get('arrivals')) else "N/A"
     fc2.metric("Arrivals", arrivals_str)
-    fc3.metric("Wiki Views", f"{f.get('wiki_views', 0):,.0f}")
+    fc3.metric("Search Interest", f"{f.get('dest_interest', 0):.1f}")
     fc4.metric("Seasonality", f"{f.get('seasonality_score', 50):.0f}/100")
 
     temp_str = f"{f['temperature']:.1f}C" if pd.notna(f.get('temperature')) else "N/A"
@@ -673,7 +678,8 @@ else:
     st.markdown("""
     | Indicator | Pillar | What it measures | Why it matters |
     |-----------|--------|-----------------|----------------|
-    | **Destination Awareness** | Demand | Wikipedia pageviews (en+de+fr, 3 months) | Proxy for international recognition; destination-specific unlike Google Trends |
+    | **Destination Search Interest** | Demand | Google Trends per destination name (worldwide) | Direct measure of tourism demand per city; replaces national-level index |
+    | **Destination Awareness** | Demand | Wikipedia pageviews (en+de+fr, 3 months) | Proxy for international recognition and pre-trip research |
     | **Seasonality Balance** | Demand | HHI of monthly tourism distribution | Low seasonality = year-round demand = higher resilience |
     | **Air Quality** | Environment | European AQI (PM2.5, PM10, O3) | Health-conscious tourism; differentiates urban vs island destinations |
     | **Coastal Comfort** | Environment | Wave height (7-day avg) | Sea conditions for Greece's dominant coastal tourism model |

@@ -63,7 +63,7 @@ PILLARS = {
     },
     "demand": {
         "label": "Demand Pressure",
-        "indicators": ["demand", "wiki_views", "seasonality"],
+        "indicators": ["dest_interest", "wiki_views", "seasonality"],
     },
     "environment": {
         "label": "Environmental",
@@ -72,15 +72,33 @@ PILLARS = {
 }
 
 COMPONENT_NAMES = {
-    "arrivals":     "Tourism Arrivals",
-    "nights":       "Nights Spent",
-    "avg_stay":     "Average Stay Duration",
-    "demand":       "Tourism Demand",
-    "wiki_views":   "Destination Awareness",
-    "seasonality":  "Seasonality Balance",
-    "weather":      "Weather Attractiveness",
-    "air_quality":  "Air Quality",
-    "coastal":      "Coastal Comfort",
+    "arrivals":       "Tourism Arrivals",
+    "nights":         "Nights Spent",
+    "avg_stay":       "Average Stay Duration",
+    "dest_interest":  "Destination Search Interest",
+    "wiki_views":     "Destination Awareness",
+    "seasonality":    "Seasonality Balance",
+    "weather":        "Weather Attractiveness",
+    "air_quality":    "Air Quality",
+    "coastal":        "Coastal Comfort",
+}
+
+# Google Trends search terms per destination (worldwide queries)
+DEST_SEARCH_TERMS = {
+    "Χανιά":            "Chania Crete",
+    "Ρόδος":            "Rhodes Greece",
+    "Μύκονος":          "Mykonos",
+    "Σαντορίνη":        "Santorini",
+    "Κέρκυρα":          "Corfu Greece",
+    "Αθήνα":            "Athens Greece",
+    "Θεσσαλονίκη":      "Thessaloniki",
+    "Ηράκλειο":         "Heraklion Crete",
+    "Ναύπλιο":          "Nafplio Greece",
+    "Ιωάννινα":         "Ioannina Greece",
+    "Λάρισα":           "Larissa Greece",
+    "Πάτρα":            "Patras Greece",
+    "Αλεξανδρούπολη":   "Alexandroupolis Greece",
+    "Μυτιλήνη":         "Lesbos Greece",
 }
 
 PILLAR_NAMES = {
@@ -157,7 +175,8 @@ def compute_pillar_weights(norm_matrix: pd.DataFrame) -> dict:
     """
     key_map = {
         "norm_arrivals": "arrivals", "norm_nights": "nights", "norm_avg_stay": "avg_stay",
-        "norm_demand": "demand", "norm_wiki_views": "wiki_views", "norm_seasonality": "seasonality",
+        "norm_dest_interest": "dest_interest", "norm_wiki_views": "wiki_views",
+        "norm_seasonality": "seasonality",
         "norm_weather": "weather", "norm_air_quality": "air_quality", "norm_coastal": "coastal",
     }
     df = norm_matrix.rename(columns=key_map)
@@ -389,6 +408,56 @@ def fetch_google_trends(
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 3b. GOOGLE TRENDS: Destination Search Interest
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def fetch_destination_trends(timeframe: str = "today 3-m") -> pd.DataFrame:
+    """
+    Fetch Google Trends search interest per destination (worldwide).
+    Uses batched queries with Athens as normalization anchor.
+    Returns DataFrame: dimos, dest_interest (0-100 relative to top destination).
+    Falls back to Wikipedia pageviews proportional if Google Trends fails.
+    """
+    import time as _time
+    from pytrends.request import TrendReq
+
+    anchor_dimos = "Αθήνα"
+    anchor_term = DEST_SEARCH_TERMS[anchor_dimos]
+    others = [(d, t) for d, t in DEST_SEARCH_TERMS.items() if d != anchor_dimos]
+
+    try:
+        pytrends = TrendReq(hl="en-US", tz=120)
+        results = {}
+
+        # Process in batches of 4 + anchor
+        for i in range(0, len(others), 4):
+            batch = others[i:i + 4]
+            keywords = [anchor_term] + [t for _, t in batch]
+
+            pytrends.build_payload(keywords, cat=0, timeframe=timeframe, geo="")
+            df = pytrends.interest_over_time()
+
+            if not df.empty:
+                recent = df.tail(4).mean()
+                anchor_val = max(recent.get(anchor_term, 1), 1)
+                for dimos, term in batch:
+                    val = recent.get(term, 0)
+                    results[dimos] = round(val / anchor_val * 100, 1)
+
+            if i + 4 < len(others):
+                _time.sleep(2)  # Rate limit courtesy
+
+        results[anchor_dimos] = 100.0
+
+        rows = [{"dimos": d, "dest_interest": results.get(d, 0)} for d in DEST_SEARCH_TERMS]
+        log.info(f"Destination Trends: {len(rows)} fetched via Google Trends")
+        return pd.DataFrame(rows)
+
+    except Exception as e:
+        log.warning(f"Destination Trends (Google) failed: {e}")
+        return pd.DataFrame()
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 4. WIKIPEDIA PAGEVIEWS: Destination Awareness
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def fetch_wikipedia_pageviews() -> pd.DataFrame:
@@ -607,7 +676,7 @@ def _normalize(series: pd.Series, lower=None, upper=None) -> pd.Series:
 
 def build_resilience_snapshot(
     df_eurostat: pd.DataFrame,
-    df_trends: pd.DataFrame,
+    df_dest_trends: pd.DataFrame,
     df_weather: pd.DataFrame,
     df_air_quality: pd.DataFrame,
     df_marine: pd.DataFrame,
@@ -665,16 +734,12 @@ def build_resilience_snapshot(
                 axis=1,
             )
 
-    # ── DEMAND PILLAR: Google Trends ──
-    if not df_trends.empty and "demand_index" in df_trends.columns:
-        latest_demand = df_trends["demand_index"].iloc[-1]
-        avg_demand_3m = df_trends["demand_index"].tail(12).mean()
-        demand_trend = ((latest_demand / avg_demand_3m) - 1) * 100 if avg_demand_3m > 0 else 0
+    # ── DEMAND PILLAR: Destination Search Interest (per-city Google Trends) ──
+    if not df_dest_trends.empty and "dest_interest" in df_dest_trends.columns:
+        df = df.merge(df_dest_trends, on="dimos", how="left")
+        df["dest_interest"] = df["dest_interest"].fillna(0)
     else:
-        latest_demand = 50
-        demand_trend = 0
-    df["demand_index"] = round(latest_demand * (1 + shock_demand / 100), 1)
-    df["demand_trend_%"] = round(demand_trend, 1)
+        df["dest_interest"] = 0  # Will be overridden by wiki fallback below
 
     # ── DEMAND PILLAR: Wikipedia Pageviews ──
     if not df_wiki.empty:
@@ -714,13 +779,26 @@ def build_resilience_snapshot(
             if col in df.columns:
                 df[col] = df[col] * (1 + shock_arrivals / 100)
 
+    # ── Fallback: if dest_interest is all zeros, derive from wiki_views ──
+    if df["dest_interest"].sum() == 0 and "wiki_views" in df.columns:
+        max_wiki = df["wiki_views"].max()
+        if max_wiki > 0:
+            df["dest_interest"] = (df["wiki_views"] / max_wiki * 100).round(1)
+            log.info("dest_interest: using Wikipedia pageviews as proportional fallback")
+        else:
+            df["dest_interest"] = 50
+
+    # Apply demand shock to dest_interest
+    if shock_demand != 0:
+        df["dest_interest"] = (df["dest_interest"] * (1 + shock_demand / 100)).clip(0, 100).round(1)
+
     # ── Normalize all 9 indicators to 0-100 ──
     # Supply
     df["norm_arrivals"] = _normalize(df["arrivals"]) if "arrivals" in df.columns else 50
     df["norm_nights"] = _normalize(df["nights"]) if "nights" in df.columns else 50
     df["norm_avg_stay"] = _normalize(df["avg_stay"], lower=1, upper=8) if "avg_stay" in df.columns else 50
     # Demand
-    df["norm_demand"] = df["demand_index"].clip(0, 100)
+    df["norm_dest_interest"] = _normalize(df["dest_interest"]) if "dest_interest" in df.columns else 50
     df["norm_wiki_views"] = _normalize(df["wiki_views"]) if "wiki_views" in df.columns else 50
     df["norm_seasonality"] = df["seasonality_score"].clip(0, 100) if "seasonality_score" in df.columns else 50
     # Environment
@@ -731,7 +809,7 @@ def build_resilience_snapshot(
     # ── Two-Stage Pillar Entropy Weights ──
     norm_cols = [
         "norm_arrivals", "norm_nights", "norm_avg_stay",
-        "norm_demand", "norm_wiki_views", "norm_seasonality",
+        "norm_dest_interest", "norm_wiki_views", "norm_seasonality",
         "norm_weather", "norm_air_quality", "norm_coastal",
     ]
 
@@ -781,7 +859,8 @@ def build_resilience_snapshot(
 def fetch_all(shock_demand: float = 0, shock_arrivals: float = 0):
     """Fetch all data sources and return tuple of DataFrames."""
     df_euro = fetch_eurostat_tourism()
-    df_trends = fetch_google_trends()
+    df_trends = fetch_google_trends()          # National trends (for time-series page)
+    df_dest = fetch_destination_trends()        # Per-destination search interest
     df_weather = fetch_weather()
     df_air = fetch_air_quality()
     df_marine = fetch_marine()
@@ -789,10 +868,10 @@ def fetch_all(shock_demand: float = 0, shock_arrivals: float = 0):
     df_season = fetch_eurostat_seasonality()
 
     snapshot = build_resilience_snapshot(
-        df_euro, df_trends, df_weather, df_air, df_marine, df_wiki, df_season,
+        df_euro, df_dest, df_weather, df_air, df_marine, df_wiki, df_season,
         shock_demand=shock_demand, shock_arrivals=shock_arrivals,
     )
-    return snapshot, df_euro, df_trends, df_weather, df_air, df_marine, df_wiki, df_season
+    return snapshot, df_euro, df_trends, df_dest, df_weather, df_air, df_marine, df_wiki, df_season
 
 
 if __name__ == "__main__":
@@ -800,7 +879,7 @@ if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-    snap, euro, trends, weather, air, marine, wiki, season = fetch_all()
+    snap, euro, trends, dest, weather, air, marine, wiki, season = fetch_all()
 
     print("\n=== TWO-STAGE PILLAR ENTROPY (3x3) ===")
     pr = snap.attrs.get("pillar_result")

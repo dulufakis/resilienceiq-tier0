@@ -150,7 +150,7 @@ if page == "Dashboard":
         st.subheader("Geographic Risk Map")
         fig_map = px.scatter_mapbox(
             df, lat="lat", lon="lon",
-            size=df["resilience_score"].clip(lower=15),
+            size=df["resilience_score"].fillna(0).clip(lower=15),
             color="zone",
             color_discrete_map={"ΥΨΗΛΗ": "#27AE60", "ΜΕΣΑΙΑ": "#E67E22", "ΧΑΜΗΛΗ": "#C0392B"},
             hover_name="dimos",

@@ -702,8 +702,7 @@ else:
     | Ρόδος | EL42 | Ν. Αιγαίο | 50% |
     | Σαντορίνη | EL42 | Ν. Αιγαίο | 28% |
     | Μύκονος | EL42 | Ν. Αιγαίο | 22% |
-    | Ηράκλειο | EL43 | Κρήτη | 65% |
-    | Χανιά | EL43 | Κρήτη | 35% |
+    | Ηράκλειο | EL43 | Κρήτη | 100% |
     | Κέρκυρα | EL62 | Ιόνια Νησιά | 100% |
     | Αθήνα | EL30 | Αττική | 100% |
     | Θεσσαλονίκη | EL52 | Κ. Μακεδονία | 100% |
@@ -718,7 +717,7 @@ else:
     st.markdown("""
     ### Tier Upgrade Path
 
-    - **Tier 0** (Free) - Open data, 14 municipalities, 3x3 Two-Stage Pillar Entropy
+    - **Tier 0** (Free) - Open data, 13 municipalities, 3x3 Two-Stage Pillar Entropy
     - **Tier 1** (Regional Lite) - All NUTS-3, SHAP + Entropy comparison
     - **Tier 2** (Analytics) - Shift-Share, Martin Index, TFT forecasts
     - **Tier 3** (DSS) - Full decision support, scenario engine, API access

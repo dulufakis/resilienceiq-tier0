@@ -23,8 +23,6 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # Municipality reference table
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 MUNICIPALITIES = {
-    "Χανιά":            {"lat": 35.5138, "lon": 24.0180, "nuts2": "EL43", "region": "Κρήτη",
-                         "wiki_en": "Chania", "coastal": True},
     "Ρόδος":            {"lat": 36.4341, "lon": 28.2176, "nuts2": "EL42", "region": "Ν. Αιγαίο",
                          "wiki_en": "Rhodes", "coastal": True},
     "Μύκονος":          {"lat": 37.4467, "lon": 25.3289, "nuts2": "EL42", "region": "Ν. Αιγαίο",
@@ -85,7 +83,6 @@ COMPONENT_NAMES = {
 
 # Google Trends search terms per destination (worldwide queries)
 DEST_SEARCH_TERMS = {
-    "Χανιά":            "Chania Crete",
     "Ρόδος":            "Rhodes Greece",
     "Μύκονος":          "Mykonos",
     "Σαντορίνη":        "Santorini",
@@ -721,7 +718,7 @@ def build_resilience_snapshot(
 
     # Tourism share split for shared NUTS-2 regions
     tourism_shares = {
-        "Χανιά": 0.35, "Ηράκλειο": 0.65,
+        "Ηράκλειο": 1.0,
         "Μύκονος": 0.22, "Σαντορίνη": 0.28, "Ρόδος": 0.50,
         "Κέρκυρα": 1.0, "Αθήνα": 1.0, "Θεσσαλονίκη": 1.0,
         "Ναύπλιο": 0.30, "Ιωάννινα": 0.50, "Λάρισα": 0.40,

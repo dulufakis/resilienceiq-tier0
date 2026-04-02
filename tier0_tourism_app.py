@@ -269,8 +269,8 @@ if page == "Dashboard":
 
         if pillar_result:
             pw = pillar_result.get("pillar_weights", {})
-            st.markdown("**Stage 1:** Within-pillar Shannon Entropy (3 indicators per pillar)")
-            st.markdown("**Stage 2:** Cross-pillar Shannon Entropy on 3 pillar composite scores")
+            st.markdown("**Stage 1:** Within-pillar Shannon Entropy — weights 3 indicators per pillar by cross-municipality variation")
+            st.markdown("**Stage 2:** Cross-pillar Shannon Entropy — weights the 3 pillar composite scores by cross-municipality variation")
 
             # Pillar summary
             pillar_rows = []

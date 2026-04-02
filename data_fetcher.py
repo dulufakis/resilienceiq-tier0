@@ -35,6 +35,7 @@ MUNICIPALITIES = {
     "Λάρισα":           {"lat": 39.6390, "lon": 22.4191, "nuts2": "EL61", "region": "Θεσσαλία"},
     "Πάτρα":            {"lat": 38.2466, "lon": 21.7346, "nuts2": "EL63", "region": "Δ. Ελλάδα"},
     "Αλεξανδρούπολη":   {"lat": 40.8469, "lon": 25.8743, "nuts2": "EL51", "region": "Α. Μακεδονία & Θράκη"},
+    "Μυτιλήνη":         {"lat": 39.1043, "lon": 26.5518, "nuts2": "EL41", "region": "Β. Αιγαίο"},
 }
 
 # Pillar definitions: groups of correlated indicators
@@ -514,6 +515,7 @@ def build_resilience_snapshot(
         "Λάρισα": 0.40,                                         # EL61 Thessalia
         "Πάτρα": 0.45,                                          # EL63 Dytiki Ellada
         "Αλεξανδρούπολη": 0.35,                                 # EL51 An. Makedonia & Thraki
+        "Μυτιλήνη": 0.40,                                       # EL41 Voreio Aigaio
     }
     for col in ["arrivals", "nights"]:
         if col in df.columns:

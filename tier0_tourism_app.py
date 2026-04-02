@@ -662,12 +662,13 @@ else:
     | Λάρισα | EL61 | Θεσσαλία | 40% |
     | Πάτρα | EL63 | Δ. Ελλάδα | 45% |
     | Αλεξανδρούπολη | EL51 | Α. Μακεδονία & Θράκη | 35% |
+    | Μυτιλήνη | EL41 | Β. Αιγαίο | 40% |
     """)
 
     st.markdown("""
     ### Tier Upgrade Path
 
-    - **Tier 0** (Free) - Open data, 13 municipalities, Two-Stage Pillar Entropy weights
+    - **Tier 0** (Free) - Open data, 14 municipalities, Two-Stage Pillar Entropy weights
     - **Tier 1** (Regional Lite) - All NUTS-3, SHAP + Entropy comparison
     - **Tier 2** (Analytics) - Shift-Share, Martin Index, TFT forecasts
     - **Tier 3** (DSS) - Full decision support, scenario engine, API access

@@ -111,14 +111,20 @@ def build_excel(df: pd.DataFrame, df_euro: pd.DataFrame, output_path: str):
     for i, w in enumerate([16, 16, 14, 16, 10, 12, 10, 10, 10], 1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
+    # Zone thresholds (μ ± 0.5σ)
+    mu = df["resilience_score"].mean()
+    sigma = df["resilience_score"].std()
+    high_thresh = mu + 0.5 * sigma
+    low_thresh = mu - 0.5 * sigma
+
     # Conditional formatting on Score (col H)
     score_range = f"H5:H{last_row}"
     ws.conditional_formatting.add(score_range,
-        CellIsRule(operator="greaterThanOrEqual", formula=["65"], fill=PatternFill(bgColor=GREEN)))
+        CellIsRule(operator="greaterThanOrEqual", formula=[str(round(high_thresh, 2))], fill=PatternFill(bgColor=GREEN)))
     ws.conditional_formatting.add(score_range,
-        CellIsRule(operator="between", formula=["45", "64.9"], fill=PatternFill(bgColor=ORANGE)))
+        CellIsRule(operator="between", formula=[str(round(low_thresh, 2)), str(round(high_thresh - 0.01, 2))], fill=PatternFill(bgColor=ORANGE)))
     ws.conditional_formatting.add(score_range,
-        CellIsRule(operator="lessThan", formula=["45"], fill=PatternFill(bgColor=RED)))
+        CellIsRule(operator="lessThan", formula=[str(round(low_thresh, 2))], fill=PatternFill(bgColor=RED)))
     ws.conditional_formatting.add(score_range,
         DataBarRule(start_type="num", start_value=0, end_type="num", end_value=100, color=BLUE))
 
@@ -139,7 +145,7 @@ def build_excel(df: pd.DataFrame, df_euro: pd.DataFrame, output_path: str):
     series = chart1.series[0]
     for i, (_, row) in enumerate(df.iterrows()):
         pt = DataPoint(idx=i)
-        color = GREEN if row["resilience_score"] >= 65 else ORANGE if row["resilience_score"] >= 45 else RED
+        color = GREEN if row["resilience_score"] >= high_thresh else ORANGE if row["resilience_score"] >= low_thresh else RED
         pt.graphicalProperties.solidFill = color
         series.data_points.append(pt)
     series.graphicalProperties.line.noFill = True

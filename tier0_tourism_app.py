@@ -428,13 +428,13 @@ elif page == "Municipality Deep-Dive":
     yoy = f.get("yoy_arrivals_%", 0)
     yoy_str = f"{yoy:+.1f}%" if pd.notna(yoy) else "N/A"
 
-    if f["resilience_score"] >= 65:
+    if f["zone"] == "ΥΨΗΛΗ":
         insight = (
             f"**{focus}** ({f['region']}) shows **HIGH** resilience (score {f['resilience_score']:.1f}). "
             f"Eurostat arrivals: {arrivals_str} (YoY: {yoy_str}). "
             f"Wikipedia awareness: {f.get('wiki_views', 0):,.0f} views."
         )
-    elif f["resilience_score"] >= 45:
+    elif f["zone"] == "ΜΕΣΑΙΑ":
         insight = (
             f"**{focus}** ({f['region']}) is in the **MODERATE** zone ({f['resilience_score']:.1f}). "
             f"Eurostat arrivals: {arrivals_str} (YoY: {yoy_str}). "
@@ -685,13 +685,15 @@ else:
     | **Coastal Comfort** | Environment | Wave height (7-day avg) | Sea conditions for Greece's dominant coastal tourism model |
     """)
 
-    st.markdown("### Zone Classification")
+    st.markdown("### Zone Classification (μ ± 0.5σ)")
     st.markdown("""
-    | Zone | Score | Interpretation |
-    |------|-------|----------------|
-    | **ΥΨΗΛΗ** (High) | >= 65 | Strong resilience, sustainable trajectory |
-    | **ΜΕΣΑΙΑ** (Moderate) | 45-64 | Functional with vulnerabilities |
-    | **ΧΑΜΗΛΗ** (Low) | < 45 | Critical, requires policy intervention |
+    | Zone | Threshold | Interpretation |
+    |------|-----------|----------------|
+    | **ΥΨΗΛΗ** (High) | ≥ μ + 0.5σ | Strong resilience, sustainable trajectory |
+    | **ΜΕΣΑΙΑ** (Moderate) | μ − 0.5σ ≤ score < μ + 0.5σ | Functional with vulnerabilities |
+    | **ΧΑΜΗΛΗ** (Low) | < μ − 0.5σ | Critical, requires policy intervention |
+
+    *Where μ = sample mean and σ = sample standard deviation of composite resilience scores.*
     """)
 
     st.markdown(f"""

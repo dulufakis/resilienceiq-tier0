@@ -840,9 +840,13 @@ def build_resilience_snapshot(
             df[f"norm_{v}"] for v in indicators
         ) / len(indicators)
 
-    # Zone classification
+    # Zone classification (μ ± 0.5σ thresholds)
+    mu = df["resilience_score"].mean()
+    sigma = df["resilience_score"].std()
+    high_threshold = mu + 0.5 * sigma
+    low_threshold = mu - 0.5 * sigma
     df["zone"] = df["resilience_score"].apply(
-        lambda s: "ΥΨΗΛΗ" if s >= 65 else "ΜΕΣΑΙΑ" if s >= 45 else "ΧΑΜΗΛΗ"
+        lambda s: "ΥΨΗΛΗ" if s >= high_threshold else "ΜΕΣΑΙΑ" if s >= low_threshold else "ΧΑΜΗΛΗ"
     )
     df["color"] = df["zone"].map({"ΥΨΗΛΗ": "#27AE60", "ΜΕΣΑΙΑ": "#E67E22", "ΧΑΜΗΛΗ": "#C0392B"})
 

@@ -83,7 +83,7 @@ with st.sidebar:
     if auto_refresh:
         st.markdown("<meta http-equiv='refresh' content='60'>", unsafe_allow_html=True)
 
-    st.caption(f"Last update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    st.caption(f"Last update: {datetime.now().strftime('%d %B %Y, %H:%M:%S')}")
 
 
 # ─── Fetch Real Data (cached) ───────────────────
@@ -127,6 +127,7 @@ df_wiki = _fetch_wiki()
 df_weather = _fetch_weather()
 df_air = _fetch_air_quality()
 df_marine = _fetch_marine()
+fetch_ts = datetime.now()
 
 euro_year = df_euro["year"].max() if not df_euro.empty else "N/A"
 
@@ -147,10 +148,11 @@ df.attrs.clear()
 # PAGE 1: DASHBOARD
 # =================================================================
 if page == "Dashboard":
-    st.markdown("""
+    st.markdown(f"""
     <div class='main-header'>
         <h1>Resilience Control Center</h1>
-        <p>Live tourism resilience | 9 indicators x 3 pillars | Eurostat + Google Trends + Wikipedia + Open-Meteo</p>
+        <p>Live tourism resilience | 9 indicators × 3 pillars | Eurostat + Google Trends + Wikipedia + Open-Meteo</p>
+        <p style="font-size:0.85em; opacity:0.75;">Data fetched: {fetch_ts.strftime('%d %B %Y, %H:%M:%S')} · Eurostat reference year: {euro_year}</p>
     </div>
     """, unsafe_allow_html=True)
 

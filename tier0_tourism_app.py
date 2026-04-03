@@ -206,7 +206,7 @@ if page == "Dashboard":
                 mapbox_layers=[{
                     "source": gr_geo,
                     "type": "line",
-                    "color": "#A0522D",
+                    "color": "#888888",
                     "line": {"width": 2.5},
                 }]
             )

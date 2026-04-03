@@ -189,7 +189,17 @@ if page == "Dashboard":
         st.plotly_chart(fig_map, use_container_width=True)
 
     with col_bar:
+        mu = df["resilience_score"].mean()
+        sigma = df["resilience_score"].std()
+        high_t = mu + 0.5 * sigma
+        low_t = mu - 0.5 * sigma
         st.subheader("Resilience Ranking")
+        st.markdown(
+            f"**μ** = {mu:.1f} &ensp; **σ** = {sigma:.1f} &ensp; | &ensp;"
+            f"🟢 High ≥ **{high_t:.1f}** &ensp; "
+            f"🟠 Moderate ≥ **{low_t:.1f}** &ensp; "
+            f"🔴 Low < **{low_t:.1f}**"
+        )
         fig_bar = go.Figure(go.Bar(
             x=df["resilience_score"], y=df["dimos"], orientation="h",
             marker_color=df["color"],
@@ -201,6 +211,10 @@ if page == "Dashboard":
             xaxis=dict(range=[0, 105], title="Resilience Score"),
             yaxis=dict(autorange="reversed"),
         )
+        fig_bar.add_vline(x=high_t, line_dash="dash", line_color="#27AE60", line_width=1.5,
+                          annotation_text=f"μ+0.5σ = {high_t:.1f}", annotation_position="top right")
+        fig_bar.add_vline(x=low_t, line_dash="dash", line_color="#C0392B", line_width=1.5,
+                          annotation_text=f"μ−0.5σ = {low_t:.1f}", annotation_position="top left")
         st.plotly_chart(fig_bar, use_container_width=True)
 
     st.divider()

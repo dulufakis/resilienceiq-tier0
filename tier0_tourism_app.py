@@ -149,7 +149,7 @@ df.attrs.clear()
 # =================================================================
 if page == "Dashboard":
     st.markdown(f"""
-    <div style="text-align:right; font-size:0.8em; color:#666; margin-bottom:-0.5rem;">
+    <div style="text-align:right; font-size:1.15em; color:#444; margin-bottom:-0.5rem;">
         📡 Data fetched: <b>{fetch_ts.strftime('%d %B %Y, %H:%M:%S')}</b> · Eurostat reference year: <b>{euro_year}</b>
     </div>
     """, unsafe_allow_html=True)

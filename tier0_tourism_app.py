@@ -149,11 +149,8 @@ df.attrs.clear()
 # =================================================================
 if page == "Dashboard":
     st.markdown(f"""
-    <div style="position:fixed; top:0.5rem; right:1rem; z-index:9999;
-                background:rgba(255,255,255,0.85); backdrop-filter:blur(6px);
-                padding:4px 12px; border-radius:6px; font-size:0.75em;
-                color:#555; border:1px solid #e0e0e0; box-shadow:0 1px 4px rgba(0,0,0,0.08);">
-        📡 Data fetched: {fetch_ts.strftime('%d %B %Y, %H:%M:%S')} · Eurostat ref. year: {euro_year}
+    <div style="text-align:right; font-size:0.8em; color:#666; margin-bottom:-0.5rem;">
+        📡 Data fetched: <b>{fetch_ts.strftime('%d %B %Y, %H:%M:%S')}</b> · Eurostat reference year: <b>{euro_year}</b>
     </div>
     """, unsafe_allow_html=True)
     st.markdown(f"""

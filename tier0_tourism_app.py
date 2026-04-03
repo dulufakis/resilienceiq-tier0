@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
+import json, urllib.request
 from datetime import datetime
 
 from data_fetcher import (
@@ -185,6 +186,29 @@ if page == "Dashboard":
             zoom=5.5, center={"lat": 38.0, "lon": 24.0},
             mapbox_style="carto-positron", height=480,
         )
+        # Greece border overlay
+        try:
+            _GR_URL = "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson"
+            @st.cache_data(ttl=86400)
+            def _load_greece_geojson():
+                with urllib.request.urlopen(_GR_URL, timeout=10) as resp:
+                    all_countries = json.loads(resp.read().decode())
+                greece = [f for f in all_countries["features"]
+                          if f["properties"].get("ADMIN") == "Greece"
+                          or f["properties"].get("ISO_A3") == "GRC"]
+                return {"type": "FeatureCollection", "features": greece} if greece else None
+            gr_geo = _load_greece_geojson()
+            if gr_geo:
+                fig_map.update_layout(
+                    mapbox_layers=[{
+                        "source": gr_geo,
+                        "type": "line",
+                        "color": "#1A237E",
+                        "line": {"width": 2},
+                    }]
+                )
+        except Exception:
+            pass  # border is cosmetic — don't break the app
         fig_map.update_layout(margin=dict(l=0, r=0, t=0, b=0), legend=dict(orientation="h", y=-0.05))
         st.plotly_chart(fig_map, use_container_width=True)
 
